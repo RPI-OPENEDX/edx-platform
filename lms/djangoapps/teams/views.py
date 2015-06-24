@@ -47,7 +47,7 @@ from .errors import AlreadyOnTeamInCourse, NotEnrolledInCourseForTeam
 
 
 # Constants
-TOPICS_PER_PAGE = 5
+TOPICS_PER_PAGE = 12
 
 
 class TeamsDashboardView(View):
