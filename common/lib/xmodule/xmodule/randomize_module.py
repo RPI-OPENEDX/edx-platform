@@ -41,9 +41,7 @@ class RandomizeModule(RandomizeFields, XModule):
     def __init__(self, *args, **kwargs):
         super(RandomizeModule, self).__init__(*args, **kwargs)
 
-        # NOTE: calling self.get_children() creates a circular reference--
-        # it calls get_child_descriptors() internally, but that doesn't work until
-        # we've picked a choice
+        # NOTE: calling self.get_children() doesn't work until we've picked a choice
         num_choices = len(self.descriptor.get_children())
 
         if self.choice > num_choices:
@@ -61,12 +59,18 @@ class RandomizeModule(RandomizeFields, XModule):
         if self.choice is not None:
             self.child_descriptor = self.descriptor.get_children()[self.choice]
             # Now get_children() should return a list with one element
-            log.debug("children of randomize module (should be only 1): %s",
-                      self.get_children())
-            self.child = self.get_children()[0]
+            self.child = self.get_chsildren()
+            log.debug("children of randomize module (should be only 1): %s", self.child)
+
         else:
             self.child_descriptor = None
             self.child = None
+
+    def get_children(self, **kwargs):
+        """ Return module instance selected choice """
+        if self.child_descriptor is None:
+            return []
+        return self.system.get_module(self.child_descriptor)
 
     def get_child_descriptors(self):
         """
