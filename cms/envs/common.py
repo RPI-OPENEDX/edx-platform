@@ -847,6 +847,7 @@ MAX_FAILED_LOGIN_ATTEMPTS_LOCKOUT_PERIOD_SECS = 15 * 60
 ### Apps only installed in some instances
 
 OPTIONAL_APPS = (
+    'edx_sga',
     'mentoring',
     'problem_builder',
     'edx_sga',
@@ -908,6 +909,7 @@ DEFAULT_COURSE_LANGUAGE = "en"
 ################ ADVANCED_COMPONENT_TYPES ###############
 
 ADVANCED_COMPONENT_TYPES = [
+    'edx_sga',
     'annotatable',
     'textannotation',  # module for annotating text (with annotation table)
     'videoannotation',  # module for annotating video (with annotation table)

@@ -2343,6 +2343,7 @@ ALL_LANGUAGES = (
 
 ### Apps only installed in some instances
 OPTIONAL_APPS = (
+    'edx_sga',
     'mentoring',
     'problem_builder',
     'edx_sga',
