@@ -26,9 +26,10 @@ from student.models import anonymous_id_for_user
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
 from xmodule.modulestore.tests.factories import CourseFactory, ItemFactory
 from xmodule.partitions.partitions import Group, UserPartition
-from openedx.core.djangoapps.credit.models import (
-    CreditCourse, CreditProvider, CreditRequirement, CreditRequirementStatus
+from openedx.core.djangoapps.credit.api import (
+    set_credit_requirements, get_credit_requirement_status
 )
+from openedx.core.djangoapps.credit.models import CreditCourse, CreditProvider
 from openedx.core.djangoapps.user_api.tests.factories import UserCourseTagFactory
 
 
@@ -622,21 +623,18 @@ class TestCourseGrader(TestSubmittingProblems):
         credit_course.providers.add(credit_provider)
         credit_course.save()
 
+        requirements = [{
+            "namespace": "grade",
+            "name": "grade",
+            "display_name": "Grade",
+            "criteria": {"min_grade": 0.52}
+        }]
         # Add a single credit requirement (final grade)
-        CreditRequirement.objects.create(
-            course=credit_course,
-            namespace="grade",
-            name="grade",
-            criteria={"min_grade": 0.52}
-        )
+        set_credit_requirements(self.course.id, requirements)
 
         self.get_grade_summary()
-        self.assertTrue(
-            CreditRequirementStatus.objects.filter(
-                username=self.student_user.username,
-                status="satisfied")
-            .exists()
-        )
+        req_status = get_credit_requirement_status(self.course.id, self.student_user.username, 'grade', 'grade')
+        self.assertEqual(req_status[0]["status"], 'satisfied')
 
 
 @attr('shard_1')

@@ -52,8 +52,9 @@ def listen_for_grade_calculation(sender, username, grade_summary, course_key, de
             if criteria:
                 min_grade = criteria.get('min_grade')
                 if grade_summary['percent'] >= min_grade:
+                    reason_dict = {'final_grade': grade_summary['percent']}
                     set_credit_requirement_status(
-                        username, course_key, 'grade', 'grade', status="satisfied", reason=grade_summary['percent']
+                        username, course_key, 'grade', 'grade', status="satisfied", reason=reason_dict
                     )
                 elif deadline and deadline < timezone.now():
                     set_credit_requirement_status(

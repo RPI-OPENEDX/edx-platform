@@ -8,9 +8,11 @@ from datetime import timedelta, datetime
 
 from django.test.client import RequestFactory
 
-from openedx.core.djangoapps.credit.models import (
-    CreditCourse, CreditProvider, CreditRequirement, CreditRequirementStatus
+from openedx.core.djangoapps.credit.api import (
+    set_credit_requirements, get_credit_requirement_status
 )
+
+from openedx.core.djangoapps.credit.models import CreditCourse, CreditProvider
 from openedx.core.djangoapps.credit.signals import listen_for_grade_calculation
 from student.tests.factories import UserFactory
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
@@ -53,13 +55,14 @@ class TestMinGradedRequirementStatus(ModuleStoreTestCase):
         credit_course.providers.add(credit_provider)
         credit_course.save()
 
+        requirements = [{
+            "namespace": "grade",
+            "name": "grade",
+            "display_name": "Grade",
+            "criteria": {"min_grade": 0.52}
+        }]
         # Add a single credit requirement (final grade)
-        CreditRequirement.objects.create(
-            course=credit_course,
-            namespace="grade",
-            name="grade",
-            criteria={"min_grade": 0.52}
-        )
+        set_credit_requirements(self.course.id, requirements)
 
     @ddt.data(
         (0.6, VALID_DUE_DATE),
@@ -73,12 +76,8 @@ class TestMinGradedRequirementStatus(ModuleStoreTestCase):
         """
 
         listen_for_grade_calculation(None, self.user.username, {'percent': grade_achieved}, self.course.id, due_date)
-        self.assertTrue(
-            CreditRequirementStatus.objects.filter(
-                username=self.request.user.username,
-                status="satisfied"
-            ).exists()
-        )
+        req_status = get_credit_requirement_status(self.course.id, self.request.user.username, 'grade', 'grade')
+        self.assertEqual(req_status[0]["status"], 'satisfied')
 
     @ddt.data(
         (0.50, None),
@@ -90,16 +89,12 @@ class TestMinGradedRequirementStatus(ModuleStoreTestCase):
         """Test with failed grades and deadline is still open or not defined."""
 
         listen_for_grade_calculation(None, self.user.username, {'percent': grade_achieved}, self.course.id, due_date)
-        with self.assertRaises(CreditRequirementStatus.DoesNotExist):
-            CreditRequirementStatus.objects.get(username=self.request.user.username)
+        req_status = get_credit_requirement_status(self.course.id, self.request.user.username, 'grade', 'grade')
+        self.assertEqual(req_status[0]["status"], None)
 
     def test_min_grade_requirement_failed_grade_expired_deadline(self):
         """Test with failed grades and deadline expire"""
 
         listen_for_grade_calculation(None, self.user.username, {'percent': 0.22}, self.course.id, self.EXPIRED_DUE_DATE)
-        self.assertTrue(
-            CreditRequirementStatus.objects.filter(
-                username=self.request.user.username,
-                status="failed"
-            ).exists()
-        )
+        req_status = get_credit_requirement_status(self.course.id, self.request.user.username, 'grade', 'grade')
+        self.assertEqual(req_status[0]["status"], 'failed')
