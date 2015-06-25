@@ -250,12 +250,13 @@ AWS_SECRET_ACCESS_KEY = AUTH_TOKENS["AWS_SECRET_ACCESS_KEY"]
 if AWS_SECRET_ACCESS_KEY == "":
     AWS_SECRET_ACCESS_KEY = None
 
-if AUTH_TOKENS.get('DEFAULT_FILE_STORAGE'):
-    DEFAULT_FILE_STORAGE = AUTH_TOKENS.get('DEFAULT_FILE_STORAGE')
-elif AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
-    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto.S3BotoStorage'
-else:
-    DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+#if AUTH_TOKENS.get('DEFAULT_FILE_STORAGE'):
+#    DEFAULT_FILE_STORAGE = AUTH_TOKENS.get('DEFAULT_FILE_STORAGE')
+#elif AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
+#    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto.S3BotoStorage'
+#else:
+DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+MEDIA_ROOT = '/edx/var/edxapp/uploads'
 
 DATABASES = AUTH_TOKENS['DATABASES']
 MODULESTORE = convert_module_store_setting_if_needed(AUTH_TOKENS.get('MODULESTORE', MODULESTORE))

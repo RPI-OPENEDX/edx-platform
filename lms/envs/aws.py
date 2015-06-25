@@ -130,7 +130,8 @@ if STATIC_URL_BASE:
         STATIC_URL += "/"
 
 # MEDIA_ROOT specifies the directory where user-uploaded files are stored.
-MEDIA_ROOT = ENV_TOKENS.get('MEDIA_ROOT', MEDIA_ROOT)
+#MEDIA_ROOT = ENV_TOKENS.get('MEDIA_ROOT', MEDIA_ROOT)
+MEDIA_ROOT = '/edx/var/edxapp/uploads'
 MEDIA_URL = ENV_TOKENS.get('MEDIA_URL', MEDIA_URL)
 
 PLATFORM_NAME = ENV_TOKENS.get('PLATFORM_NAME', PLATFORM_NAME)
@@ -399,12 +400,12 @@ if AWS_SECRET_ACCESS_KEY == "":
 
 AWS_STORAGE_BUCKET_NAME = AUTH_TOKENS.get('AWS_STORAGE_BUCKET_NAME', 'edxuploads')
 
-if AUTH_TOKENS.get('DEFAULT_FILE_STORAGE'):
-    DEFAULT_FILE_STORAGE = AUTH_TOKENS.get('DEFAULT_FILE_STORAGE')
-elif AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
-    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto.S3BotoStorage'
-else:
-    DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+#if AUTH_TOKENS.get('DEFAULT_FILE_STORAGE'):
+#    DEFAULT_FILE_STORAGE = AUTH_TOKENS.get('DEFAULT_FILE_STORAGE')
+#elif AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
+#    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto.S3BotoStorage'
+#else:
+DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
 
 # Specific setting for the File Upload Service to store media in a bucket.
 FILE_UPLOAD_STORAGE_BUCKET_NAME = ENV_TOKENS.get('FILE_UPLOAD_STORAGE_BUCKET_NAME', FILE_UPLOAD_STORAGE_BUCKET_NAME)
