@@ -1,6 +1,6 @@
 
 # Python libraries to install directly from github
--e git+https://github.com/mitodl/edx-sga@master#egg=edx-sga
+-e git+https://github.com/RPI-OPENEDX/edx-sga.git
 
 # Third-party:
 -e git+https://github.com/edx/django-staticfiles.git@d89aae2a82f2b#egg=django-staticfiles
