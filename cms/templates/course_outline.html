@@ -52,6 +52,10 @@ from contentstore.utils import reverse_usage_url
   %endif
 </%block>
 
+%if course_creator_status!='granted':
+        <div class="mentor">Please request course creation rights to edit content</div>
+    
+%else:
 <%block name="content">
 <div class="wrapper-mast wrapper">
     <header class="mast has-actions has-subtitle">
@@ -142,3 +146,4 @@ from contentstore.utils import reverse_usage_url
     </section>
 </div>
 </%block>
+%endif
