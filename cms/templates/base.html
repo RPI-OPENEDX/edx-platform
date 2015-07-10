@@ -63,7 +63,13 @@ import json
       </div>
 
       <div id="content">
+          % if user.is_authenticated() and \
+            not user.is_superuser and \
+            not course_creator_status == 'granted':
+                <div id="needsmorecowbell">Please request course creator rights to edit content</div>
+          %else:
       <%block name="content"></%block>
+          %endif
       </div>
 
       % if user.is_authenticated():
