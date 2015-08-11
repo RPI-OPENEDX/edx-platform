@@ -1,6 +1,6 @@
 
 # Python libraries to install directly from github
--e git+https://github.com/RPI-OPENEDX/edx-sga.git@RPI-DEV#egg=edx-sga
+
 
 # Third-party:
 -e git+https://github.com/edx/django-staticfiles.git@d89aae2a82f2b#egg=django-staticfiles
@@ -56,6 +56,6 @@ git+https://github.com/edx/ecommerce-api-client.git@1.1.0#egg=ecommerce-api-clie
 # Third Party XBlocks
 <<<<<<< HEAD
 =======
--e git+https://github.com/mitodl/edx-sga@172a90fd2738f8142c10478356b2d9ed3e55334a#egg=edx-sga
+-e git+https://github.com/RPI-OPENEDX/edx-sga.git@RPI-DEV#egg=edx-sga
 -e git+https://github.com/open-craft/xblock-poll@v1.0#egg=xblock-poll
 >>>>>>> edx/release
