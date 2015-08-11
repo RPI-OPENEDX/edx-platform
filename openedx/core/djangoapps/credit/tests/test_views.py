@@ -73,13 +73,11 @@ class CreditProviderViewTests(UrlResetMixin, TestCase):
         )
 
         # Configure a credit provider for the course
-        credit_provider = CreditProvider.objects.create(
+        CreditProvider.objects.create(
             provider_id=self.PROVIDER_ID,
             enable_integration=True,
             provider_url=self.PROVIDER_URL,
         )
-        credit_course.providers.add(credit_provider)
-        credit_course.save()
 
         # Add a single credit requirement (final grade)
         requirement = CreditRequirement.objects.create(
@@ -190,6 +188,15 @@ class CreditProviderViewTests(UrlResetMixin, TestCase):
         response = self._credit_provider_callback(request_uuid, "approved", timestamp=timestamp)
         self.assertEqual(response.status_code, 403)
 
+    def test_credit_provider_callback_handles_string_timestamp(self):
+        request_uuid = self._create_credit_request_and_get_uuid(self.USERNAME, self.COURSE_KEY)
+
+        # Simulate a callback from the credit provider with a timestamp
+        # encoded as a string instead of an integer.
+        timestamp = str(to_timestamp(datetime.datetime.now(pytz.UTC)))
+        response = self._credit_provider_callback(request_uuid, "approved", timestamp=timestamp)
+        self.assertEqual(response.status_code, 200)
+
     def test_credit_provider_callback_is_idempotent(self):
         request_uuid = self._create_credit_request_and_get_uuid(self.USERNAME, self.COURSE_KEY)
 
@@ -247,11 +254,8 @@ class CreditProviderViewTests(UrlResetMixin, TestCase):
         other_provider_id = "other_provider"
         other_provider_secret_key = "1d01f067a5a54b0b8059f7095a7c636d"
 
-        # Create an additional credit provider and associate it with the course.
-        credit_course = CreditCourse.objects.get(course_key=self.COURSE_KEY)
-        credit_provider = CreditProvider.objects.create(provider_id=other_provider_id, enable_integration=True)
-        credit_course.providers.add(credit_provider)
-        credit_course.save()
+        # Create an additional credit provider
+        CreditProvider.objects.create(provider_id=other_provider_id, enable_integration=True)
 
         # Initiate a credit request with the first provider
         request_uuid = self._create_credit_request_and_get_uuid(self.USERNAME, self.COURSE_KEY)

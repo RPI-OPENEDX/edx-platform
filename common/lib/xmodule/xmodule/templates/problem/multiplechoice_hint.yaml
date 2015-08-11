@@ -1,7 +1,6 @@
 ---
 metadata:
     display_name: Multiple Choice with Hints and Feedback
-    tab: hint
     markdown: |
 
        You can provide feedback for each option in a multiple choice problem.
@@ -21,6 +20,7 @@ metadata:
        ||A fruit is the fertilized ovary from a flower.||
        ||A fruit contains seeds of the plant.||
 
+hinted: true
 data: |
    <problem>
      

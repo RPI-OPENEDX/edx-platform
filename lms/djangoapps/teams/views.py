@@ -1,14 +1,16 @@
 """HTTP endpoints for the Teams API."""
 
 from django.shortcuts import render_to_response
-from opaque_keys.edx.keys import CourseKey
 from courseware.courses import get_course_with_access, has_access
 from django.http import Http404
 from django.conf import settings
+from django.core.paginator import Paginator
 from django.views.generic.base import View
+import newrelic.agent
 
 from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response
+from rest_framework.reverse import reverse
 from rest_framework.views import APIView
 from rest_framework.authentication import (
     SessionAuthentication,
@@ -19,6 +21,7 @@ from rest_framework import permissions
 
 from django.db.models import Count
 from django.contrib.auth.models import User
+from django_countries import countries
 from django.utils.translation import ugettext as _
 from django.utils.translation import ugettext_noop
 
@@ -40,9 +43,22 @@ from xmodule.modulestore.django import modulestore
 from opaque_keys import InvalidKeyError
 from opaque_keys.edx.keys import CourseKey
 
+from django_comment_client.utils import has_discussion_privileges
+
 from .models import CourseTeam, CourseTeamMembership
-from .serializers import CourseTeamSerializer, CourseTeamCreationSerializer, TopicSerializer, MembershipSerializer
+from .serializers import (
+    CourseTeamSerializer,
+    CourseTeamCreationSerializer,
+    BaseTopicSerializer,
+    TopicSerializer,
+    PaginatedTopicSerializer,
+    MembershipSerializer
+)
 from .errors import AlreadyOnTeamInCourse, NotEnrolledInCourseForTeam
+
+
+# Constants
+TOPICS_PER_PAGE = 12
 
 
 class TeamsDashboardView(View):
@@ -67,7 +83,28 @@ class TeamsDashboardView(View):
                 not has_access(request.user, 'staff', course, course.id):
             raise Http404
 
-        context = {"course": course}
+        sort_order = 'name'
+        topics = get_ordered_topics(course, sort_order)
+        topics_page = Paginator(topics, TOPICS_PER_PAGE).page(1)
+        topics_serializer = PaginatedTopicSerializer(
+            instance=topics_page,
+            context={'course_id': course.id, 'sort_order': sort_order}
+        )
+        user = request.user
+        context = {
+            "course": course,
+            "topics": topics_serializer.data,
+            "topic_url": reverse(
+                'topics_detail', kwargs={'topic_id': 'topic_id', 'course_id': str(course_id)}, request=request
+            ),
+            "topics_url": reverse('topics_list', request=request),
+            "teams_url": reverse('teams_list', request=request),
+            "languages": settings.ALL_LANGUAGES,
+            "countries": list(countries),
+            "username": user.username,
+            "privileged": has_discussion_privileges(user, course_key),
+            "disable_courseware_js": True,
+        }
         return render_to_response("teams/teams.html", context)
 
 
@@ -158,6 +195,9 @@ class TeamsListView(ExpandableFieldViewMixin, GenericAPIView):
 
                 * id: The team's unique identifier.
 
+                * discussion_topic_id: The unique id of the comments service
+                  discussion topic associated with this team.
+
                 * name: The name of the team.
 
                 * is_active: True if the team is currently active. If false, the
@@ -226,6 +266,7 @@ class TeamsListView(ExpandableFieldViewMixin, GenericAPIView):
     pagination_serializer_class = PaginationSerializer
     serializer_class = CourseTeamSerializer
 
+    @newrelic.agent.function_trace()
     def get(self, request):
         """GET /api/team/v0/teams/"""
         result_filter = {
@@ -237,7 +278,8 @@ class TeamsListView(ExpandableFieldViewMixin, GenericAPIView):
             try:
                 course_key = CourseKey.from_string(course_id_string)
                 # Ensure the course exists
-                if not modulestore().has_course(course_key):
+                course_module = modulestore().get_course(course_key)
+                if course_module is None:
                     return Response(status=status.HTTP_404_NOT_FOUND)
                 result_filter.update({'course_id': course_key})
             except InvalidKeyError:
@@ -256,6 +298,13 @@ class TeamsListView(ExpandableFieldViewMixin, GenericAPIView):
             )
 
         if 'topic_id' in request.QUERY_PARAMS:
+            topic_id = request.QUERY_PARAMS['topic_id']
+            if topic_id not in [topic['id'] for topic in course_module.teams_configuration['topics']]:
+                error = build_api_error(
+                    ugettext_noop('The supplied topic id {topic_id} is not valid'),
+                    topic_id=topic_id
+                )
+                return Response(error, status=status.HTTP_400_BAD_REQUEST)
             result_filter.update({'topic_id': request.QUERY_PARAMS['topic_id']})
         if 'include_inactive' in request.QUERY_PARAMS and request.QUERY_PARAMS['include_inactive'].lower() == 'true':
             del result_filter['is_active']
@@ -279,14 +328,21 @@ class TeamsListView(ExpandableFieldViewMixin, GenericAPIView):
                 build_api_error(ugettext_noop("last_activity is not yet supported")),
                 status=status.HTTP_400_BAD_REQUEST
             )
+        else:
+            return Response({
+                'developer_message': "unsupported order_by value {ordering}".format(ordering=order_by_input),
+                # Translators: 'ordering' is a string describing a way
+                # of ordering a list. For example, {ordering} may be
+                # 'name', indicating that the user wants to sort the
+                # list by lower case name.
+                'user_message': _(u"The ordering {ordering} is not supported").format(ordering=order_by_input),
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         queryset = queryset.order_by(order_by_field)
 
-        if not queryset:
-            return Response(status=status.HTTP_404_NOT_FOUND)
-
         page = self.paginate_queryset(queryset)
         serializer = self.get_pagination_serializer(page)
+        serializer.context.update({'sort_order': order_by_input})  # pylint: disable=maybe-no-member
         return Response(serializer.data)  # pylint: disable=maybe-no-member
 
     def post(self, request):
@@ -321,6 +377,10 @@ class TeamsListView(ExpandableFieldViewMixin, GenericAPIView):
             }, status=status.HTTP_400_BAD_REQUEST)
         else:
             team = serializer.save()
+            if not (has_access(request.user, 'staff', course_key)
+                    or has_discussion_privileges(request.user, course_key)):
+                # Add the creating user to the team.
+                team.add_user(request.user)
             return Response(CourseTeamSerializer(team).data)
 
 
@@ -347,6 +407,9 @@ class TeamsDetailView(ExpandableFieldViewMixin, RetrievePatchAPIView):
             If the user is logged in, the response contains the following fields:
 
                 * id: The team's unique identifier.
+
+                * discussion_topic_id: The unique id of the comments service
+                  discussion topic associated with this team.
 
                 * name: The name of the team.
 
@@ -479,10 +542,10 @@ class TopicListView(GenericAPIView):
     authentication_classes = (OAuth2Authentication, SessionAuthentication)
     permission_classes = (permissions.IsAuthenticated,)
 
-    paginate_by = 10
+    paginate_by = TOPICS_PER_PAGE
     paginate_by_param = 'page_size'
-    pagination_serializer_class = PaginationSerializer
-    serializer_class = TopicSerializer
+    pagination_serializer_class = PaginatedTopicSerializer
+    serializer_class = BaseTopicSerializer
 
     def get(self, request):
         """GET /api/team/v0/topics/?course_id={course_id}"""
@@ -510,20 +573,35 @@ class TopicListView(GenericAPIView):
         if not has_team_api_access(request.user, course_id):
             return Response(status=status.HTTP_403_FORBIDDEN)
 
-        topics = course_module.teams_topics
-
         ordering = request.QUERY_PARAMS.get('order_by', 'name')
         if ordering == 'name':
-            topics = sorted(topics, key=lambda t: t['name'].lower())
+            topics = get_ordered_topics(course_module, ordering)
         else:
             return Response({
-                'developer_message': "unsupported order_by value {}".format(ordering),
-                'user_message': _(u"The ordering {} is not supported").format(ordering),
+                'developer_message': "unsupported order_by value {ordering}".format(ordering=ordering),
+                # Translators: 'ordering' is a string describing a way
+                # of ordering a list. For example, {ordering} may be
+                # 'name', indicating that the user wants to sort the
+                # list by lower case name.
+                'user_message': _(u"The ordering {ordering} is not supported").format(ordering=ordering),
             }, status=status.HTTP_400_BAD_REQUEST)
 
         page = self.paginate_queryset(topics)
-        serializer = self.get_pagination_serializer(page)
-        return Response(serializer.data)  # pylint: disable=maybe-no-member
+        serializer = self.pagination_serializer_class(page, context={'course_id': course_id, 'sort_order': ordering})
+        return Response(serializer.data)
+
+
+def get_ordered_topics(course_module, ordering):
+    """Return a sorted list of team topics.
+
+    Arguments:
+        course_module (xmodule): the course which owns the team topics
+        ordering (str): the key belonging to topic dicts by which we sort
+
+    Returns:
+        list: a list of sorted team topics
+    """
+    return sorted(course_module.teams_topics, key=lambda t: t[ordering].lower())
 
 
 class TopicDetailView(APIView):
@@ -588,7 +666,7 @@ class TopicDetailView(APIView):
         if len(topics) == 0:
             return Response(status=status.HTTP_404_NOT_FOUND)
 
-        serializer = TopicSerializer(topics[0])
+        serializer = TopicSerializer(topics[0], context={'course_id': course_id})
         return Response(serializer.data)
 
 

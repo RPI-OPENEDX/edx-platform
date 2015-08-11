@@ -12,7 +12,8 @@ from django.http import (
     HttpResponseForbidden,
     Http404
 )
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_POST, require_GET
+from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 
 from opaque_keys.edx.keys import CourseKey
@@ -26,6 +27,54 @@ from openedx.core.djangoapps.credit.exceptions import CreditApiBadRequest, Credi
 
 
 log = logging.getLogger(__name__)
+
+
+@require_GET
+def get_providers_detail(request):
+    """
+
+    **User Cases**
+
+        Returns details of the credit providers filtered by provided query parameters.
+
+    **Parameters:**
+
+        * provider_id (list of provider ids separated with ","): The identifiers for the providers for which
+        user requested
+
+    **Example Usage:**
+
+        GET /api/credit/v1/providers?provider_id=asu,hogwarts
+        "response": [
+            "id": "hogwarts",
+            "display_name": "Hogwarts School of Witchcraft and Wizardry",
+            "url": "https://credit.example.com/",
+            "status_url": "https://credit.example.com/status/",
+            "description": "A new model for the Witchcraft and Wizardry School System.",
+            "enable_integration": false,
+            "fulfillment_instructions": "
+            <p>In order to fulfill credit, Hogwarts School of Witchcraft and Wizardry requires learners to:</p>
+            <ul>
+            <li>Sample instruction abc</li>
+            <li>Sample instruction xyz</li>
+            </ul>",
+        },
+        ...
+        ]
+
+    **Responses:**
+
+        * 200 OK: The request was created successfully. Returned content
+            is a JSON-encoded dictionary describing what the client should
+            send to the credit provider.
+
+        * 404 Not Found: The provider does not exist.
+
+    """
+    provider_id = request.GET.get("provider_id", None)
+    providers_list = provider_id.split(",") if provider_id else None
+    providers = api.get_credit_providers(providers_list)
+    return JsonResponse(providers)
 
 
 @require_POST
@@ -43,7 +92,7 @@ def create_credit_request(request, provider_id):
 
     **Example Usage:**
 
-        POST /api/credit/v1/provider/hogwarts/request/
+        POST /api/credit/v1/providers/hogwarts/request/
         {
             "username": "ron",
             "course_key": "edX/DemoX/Demo_Course"
@@ -127,6 +176,7 @@ def create_credit_request(request, provider_id):
 
 
 @require_POST
+@csrf_exempt
 def credit_provider_callback(request, provider_id):
     """
     Callback end-point used by credit providers to approve or reject
@@ -134,7 +184,7 @@ def credit_provider_callback(request, provider_id):
 
     **Example Usage:**
 
-        POST /api/credit/v1/provider/{provider-id}/callback
+        POST /api/credit/v1/providers/{provider-id}/callback
         {
             "request_uuid": "557168d0f7664fe59097106c67c3f847",
             "status": "approved",
@@ -150,8 +200,9 @@ def credit_provider_callback(request, provider_id):
 
         * status (string): Either "approved" or "rejected".
 
-        * timestamp (int): The datetime at which the POST request was made, represented
+        * timestamp (int or string): The datetime at which the POST request was made, represented
             as the number of seconds since January 1, 1970 00:00:00 UTC.
+            If the timestamp is a string, it will be converted to an integer.
 
         * signature (string): A digital signature of the request parameters,
             created using a secret key shared with the credit provider.
@@ -195,6 +246,39 @@ def credit_provider_callback(request, provider_id):
         return HttpResponseBadRequest(ex)
     else:
         return HttpResponse()
+
+
+@require_GET
+def get_eligibility_for_user(request):
+    """
+
+    **User Cases**
+
+        Retrieve user eligibility against course.
+
+    **Parameters:**
+
+        * course_key (unicode): Identifier of course.
+        * username (unicode): Username of current User.
+
+    **Example Usage:**
+
+        GET /api/credit/v1/eligibility?username=user&course_key=edX/Demo_101/Fall
+        "response": {
+                "course_key": "edX/Demo_101/Fall",
+                "deadline": "2015-10-23"
+            }
+
+    **Responses:**
+
+        * 200 OK: The request was created successfully.
+
+        * 404 Not Found: The provider does not exist.
+
+    """
+    course_key = request.GET.get("course_key", None)
+    username = request.GET.get("username", None)
+    return JsonResponse(api.get_eligibilities_for_user(username=username, course_key=course_key))
 
 
 def _validate_json_parameters(params_string, expected_parameters):
@@ -257,7 +341,8 @@ def _validate_timestamp(timestamp_value, provider_id):
     Check that the timestamp of the request is recent.
 
     Arguments:
-        timestamp (int): Number of seconds since Jan. 1, 1970 UTC.
+        timestamp (int or string): Number of seconds since Jan. 1, 1970 UTC.
+            If specified as a string, it will be converted to an integer.
         provider_id (unicode): Identifier for the credit provider.
 
     Returns:

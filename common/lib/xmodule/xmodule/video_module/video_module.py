@@ -86,7 +86,8 @@ log = logging.getLogger(__name__)
 _ = lambda text: text
 
 
-class VideoModule(VideoFields, VideoTranscriptsMixin, VideoStudentViewHandlers, XModule):
+@XBlock.wants('settings')
+class VideoModule(VideoFields, VideoTranscriptsMixin, VideoStudentViewHandlers, XModule, LicenseMixin):
     """
     XML source example:
         <video show_captions="true"
@@ -261,6 +262,15 @@ class VideoModule(VideoFields, VideoTranscriptsMixin, VideoStudentViewHandlers, 
             cdn_exp_group = None
 
         self.youtube_streams = youtube_streams or create_youtube_string(self)  # pylint: disable=W0201
+
+        settings_service = self.runtime.service(self, 'settings')
+
+        yt_api_key = None
+        if settings_service:
+            xblock_settings = settings_service.get_settings_bucket(self)
+            if xblock_settings and 'YOUTUBE_API_KEY' in xblock_settings:
+                yt_api_key = xblock_settings['YOUTUBE_API_KEY']
+
         metadata = {
             'saveStateUrl': self.system.ajax_url + '/save_user_state',
             'autoplay': settings.FEATURES.get('AUTOPLAY_VIDEOS', False),
@@ -286,7 +296,9 @@ class VideoModule(VideoFields, VideoTranscriptsMixin, VideoStudentViewHandlers, 
             'ytTestTimeout': 1500,
 
             'ytApiUrl': settings.YOUTUBE['API'],
-            'ytTestUrl': settings.YOUTUBE['TEST_URL'],
+            'ytMetadataUrl': settings.YOUTUBE['METADATA_URL'],
+            'ytKey': yt_api_key,
+
             'transcriptTranslationUrl': self.runtime.handler_url(
                 self, 'transcript', 'translation/__lang__'
             ).rstrip('/?'),
@@ -332,12 +344,14 @@ class VideoModule(VideoFields, VideoTranscriptsMixin, VideoStudentViewHandlers, 
 @XBlock.wants("request_cache")
 @XBlock.wants("settings")
 class VideoDescriptor(VideoFields, VideoTranscriptsMixin, VideoStudioViewHandlers,
-                      TabsEditingDescriptor, EmptyDataRawDescriptor):
+                      TabsEditingDescriptor, EmptyDataRawDescriptor, LicenseMixin):
     """
     Descriptor for `VideoModule`.
     """
     module_class = VideoModule
     transcript = module_attr('transcript')
+
+    show_in_read_only_mode = True
 
     tabs = [
         {
@@ -381,9 +395,10 @@ class VideoDescriptor(VideoFields, VideoTranscriptsMixin, VideoStudioViewHandler
                 if not self.fields['download_video'].is_set_on(self):
                     self.download_video = True
 
-        # Set download_video field to default value if its not explicitly set for backward compatibility.
+        # Force download_video field to default value if it's not explicitly set for backward compatibility.
         if not self.fields['download_video'].is_set_on(self):
             self.download_video = self.download_video
+            self.force_save_fields(['download_video'])
 
         # for backward compatibility.
         # If course was existed and was not re-imported by the moment of adding `download_track` field,

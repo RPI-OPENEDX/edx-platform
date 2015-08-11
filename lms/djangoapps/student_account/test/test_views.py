@@ -18,15 +18,13 @@ from django.test import TestCase
 from django.test.utils import override_settings
 from django.test.client import RequestFactory
 
-from embargo.test_utils import restrict_course
 from openedx.core.djangoapps.user_api.accounts.api import activate_account, create_account
 from openedx.core.djangoapps.user_api.accounts import EMAIL_MAX_LENGTH
-from student.tests.factories import CourseModeFactory, UserFactory
+from student.tests.factories import UserFactory
 from student_account.views import account_settings_context
-from third_party_auth.tests.testutil import simulate_running_pipeline
+from third_party_auth.tests.testutil import simulate_running_pipeline, ThirdPartyAuthTestMixin
 from util.testing import UrlResetMixin
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
-from xmodule.modulestore.tests.factories import CourseFactory
 
 
 @ddt.ddt
@@ -204,7 +202,7 @@ class StudentAccountUpdateTest(UrlResetMixin, TestCase):
 
 
 @ddt.ddt
-class StudentAccountLoginAndRegistrationTest(UrlResetMixin, ModuleStoreTestCase):
+class StudentAccountLoginAndRegistrationTest(ThirdPartyAuthTestMixin, UrlResetMixin, ModuleStoreTestCase):
     """ Tests for the student account views that update the user's account information. """
 
     USERNAME = "bob"
@@ -214,6 +212,9 @@ class StudentAccountLoginAndRegistrationTest(UrlResetMixin, ModuleStoreTestCase)
     @mock.patch.dict(settings.FEATURES, {'EMBARGO': True})
     def setUp(self):
         super(StudentAccountLoginAndRegistrationTest, self).setUp('embargo')
+        # For these tests, two third party auth providers are enabled by default:
+        self.configure_google_provider(enabled=True)
+        self.configure_facebook_provider(enabled=True)
 
     @ddt.data(
         ("account_login", "login"),
@@ -290,7 +291,7 @@ class StudentAccountLoginAndRegistrationTest(UrlResetMixin, ModuleStoreTestCase)
     @ddt.unpack
     def test_third_party_auth(self, url_name, current_backend, current_provider):
         params = [
-            ('course_id', 'edX/DemoX/Demo_Course'),
+            ('course_id', 'course-v1:Org+Course+Run'),
             ('enrollment_action', 'enroll'),
             ('course_mode', 'honor'),
             ('email_opt_in', 'true'),
@@ -310,12 +311,14 @@ class StudentAccountLoginAndRegistrationTest(UrlResetMixin, ModuleStoreTestCase)
         # This relies on the THIRD_PARTY_AUTH configuration in the test settings
         expected_providers = [
             {
+                "id": "oa2-facebook",
                 "name": "Facebook",
                 "iconClass": "fa-facebook",
                 "loginUrl": self._third_party_login_url("facebook", "login", params),
                 "registerUrl": self._third_party_login_url("facebook", "register", params)
             },
             {
+                "id": "oa2-google-oauth2",
                 "name": "Google",
                 "iconClass": "fa-google-plus",
                 "loginUrl": self._third_party_login_url("google-oauth2", "login", params),
@@ -323,6 +326,11 @@ class StudentAccountLoginAndRegistrationTest(UrlResetMixin, ModuleStoreTestCase)
             }
         ]
         self._assert_third_party_auth_data(response, current_backend, current_provider, expected_providers)
+
+    def test_hinted_login(self):
+        params = [("next", "/courses/something/?tpa_hint=oa2-google-oauth2")]
+        response = self.client.get(reverse('account_login'), params)
+        self.assertContains(response, "data-third-party-auth-hint='oa2-google-oauth2'")
 
     @override_settings(SITE_NAME=settings.MICROSITE_TEST_HOSTNAME)
     def test_microsite_uses_old_login_page(self):
@@ -347,11 +355,15 @@ class StudentAccountLoginAndRegistrationTest(UrlResetMixin, ModuleStoreTestCase)
 
     def _assert_third_party_auth_data(self, response, current_backend, current_provider, providers):
         """Verify that third party auth info is rendered correctly in a DOM data attribute. """
+        finish_auth_url = None
+        if current_backend:
+            finish_auth_url = reverse("social:complete", kwargs={"backend": current_backend}) + "?"
         auth_info = markupsafe.escape(
             json.dumps({
                 "currentProvider": current_provider,
                 "providers": providers,
-                "finishAuthUrl": "/auth/complete/{}?".format(current_backend) if current_backend else None,
+                "secondaryProviders": [],
+                "finishAuthUrl": finish_auth_url,
                 "errorMessage": None,
             })
         )
@@ -382,7 +394,7 @@ class StudentAccountLoginAndRegistrationTest(UrlResetMixin, ModuleStoreTestCase)
         })
 
 
-class AccountSettingsViewTest(TestCase):
+class AccountSettingsViewTest(ThirdPartyAuthTestMixin, TestCase):
     """ Tests for the account settings view. """
 
     USERNAME = 'student'
@@ -405,6 +417,10 @@ class AccountSettingsViewTest(TestCase):
 
         self.request = RequestFactory()
         self.request.user = self.user
+
+        # For these tests, two third party auth providers are enabled by default:
+        self.configure_google_provider(enabled=True)
+        self.configure_facebook_provider(enabled=True)
 
         # Python-social saves auth failure notifcations in Django messages.
         # See pipeline.get_duplicate_provider() for details.
@@ -432,7 +448,7 @@ class AccountSettingsViewTest(TestCase):
             context['user_preferences_api_url'], reverse('preferences_api', kwargs={'username': self.user.username})
         )
 
-        self.assertEqual(context['duplicate_provider'].BACKEND_CLASS.name, 'facebook')
+        self.assertEqual(context['duplicate_provider'], 'facebook')
         self.assertEqual(context['auth']['providers'][0]['name'], 'Facebook')
         self.assertEqual(context['auth']['providers'][1]['name'], 'Google')
 
@@ -443,3 +459,60 @@ class AccountSettingsViewTest(TestCase):
 
         for attribute in self.FIELDS:
             self.assertIn(attribute, response.content)
+
+
+@override_settings(SITE_NAME=settings.MICROSITE_LOGISTRATION_HOSTNAME)
+class MicrositeLogistrationTests(TestCase):
+    """
+    Test to validate that microsites can display the logistration page
+    """
+
+    def test_login_page(self):
+        """
+        Make sure that we get the expected logistration page on our specialized
+        microsite
+        """
+
+        resp = self.client.get(
+            reverse('account_login'),
+            HTTP_HOST=settings.MICROSITE_LOGISTRATION_HOSTNAME
+        )
+        self.assertEqual(resp.status_code, 200)
+
+        self.assertIn('<div id="login-and-registration-container"', resp.content)
+
+    def test_registration_page(self):
+        """
+        Make sure that we get the expected logistration page on our specialized
+        microsite
+        """
+
+        resp = self.client.get(
+            reverse('account_register'),
+            HTTP_HOST=settings.MICROSITE_LOGISTRATION_HOSTNAME
+        )
+        self.assertEqual(resp.status_code, 200)
+
+        self.assertIn('<div id="login-and-registration-container"', resp.content)
+
+    @override_settings(SITE_NAME=settings.MICROSITE_TEST_HOSTNAME)
+    def test_no_override(self):
+        """
+        Make sure we get the old style login/registration if we don't override
+        """
+
+        resp = self.client.get(
+            reverse('account_login'),
+            HTTP_HOST=settings.MICROSITE_TEST_HOSTNAME
+        )
+        self.assertEqual(resp.status_code, 200)
+
+        self.assertNotIn('<div id="login-and-registration-container"', resp.content)
+
+        resp = self.client.get(
+            reverse('account_register'),
+            HTTP_HOST=settings.MICROSITE_TEST_HOSTNAME
+        )
+        self.assertEqual(resp.status_code, 200)
+
+        self.assertNotIn('<div id="login-and-registration-container"', resp.content)

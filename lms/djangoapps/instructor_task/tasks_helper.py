@@ -18,6 +18,7 @@ from celery.states import SUCCESS, FAILURE
 from django.contrib.auth.models import User
 from django.core.files.storage import DefaultStorage
 from django.db import transaction, reset_queries
+from django.db.models import Q
 import dogstats_wrapper as dog_stats_api
 from pytz import UTC
 from StringIO import StringIO
@@ -30,14 +31,20 @@ from shoppingcart.models import (
 
 from track.views import task_track
 from util.file import course_filename_prefix_generator, UniversalNewlineIterator
+from xblock.runtime import KvsFieldData
 from xmodule.modulestore.django import modulestore
 from xmodule.split_test_module import get_split_user_partitions
 from django.utils.translation import ugettext as _
-from certificates.models import CertificateWhitelist, certificate_info_for_user
+from certificates.models import (
+    CertificateWhitelist,
+    certificate_info_for_user,
+    CertificateStatuses
+)
+from certificates.api import generate_user_certificates
 from courseware.courses import get_course_by_id, get_problems_in_section
 from courseware.grades import iterate_grades_for
 from courseware.models import StudentModule
-from courseware.model_data import FieldDataCache
+from courseware.model_data import DjangoKeyValueStore, FieldDataCache
 from courseware.module_render import get_module_for_descriptor_internal
 from instructor_analytics.basic import enrolled_students_features, list_may_enroll
 from instructor_analytics.csvs import format_dictlist
@@ -50,7 +57,6 @@ from opaque_keys.edx.keys import UsageKey
 from openedx.core.djangoapps.course_groups.cohorts import add_user_to_cohort, is_course_cohorted
 from student.models import CourseEnrollment, CourseAccessRole
 from verify_student.models import SoftwareSecurePhotoVerification
-
 
 # define different loggers for use within tasks and on client side
 TASK_LOG = logging.getLogger('edx.celery.task')
@@ -416,6 +422,7 @@ def _get_module_instance_for_task(course_id, student, module_descriptor, xmodule
     """
     # reconstitute the problem's corresponding XModule:
     field_data_cache = FieldDataCache.cache_for_descriptor_descendents(course_id, student, module_descriptor)
+    student_data = KvsFieldData(DjangoKeyValueStore(field_data_cache))
 
     # get request-related tracking information from args passthrough, and supplement with task-specific
     # information:
@@ -438,7 +445,7 @@ def _get_module_instance_for_task(course_id, student, module_descriptor, xmodule
     return get_module_for_descriptor_internal(
         user=student,
         descriptor=module_descriptor,
-        field_data_cache=field_data_cache,
+        student_data=student_data,
         course_id=course_id,
         track_function=make_track_function(),
         xqueue_callback_url_prefix=xqueue_callback_url_prefix,
@@ -1247,6 +1254,44 @@ def upload_exec_summary_report(_xmodule_instance_args, _entry_id, course_id, _ta
     return task_progress.update_task_state(extra_meta=current_step)
 
 
+def generate_students_certificates(
+        _xmodule_instance_args, _entry_id, course_id, task_input, action_name):  # pylint: disable=unused-argument
+    """
+    For a given `course_id`, generate certificates for all students
+    that are enrolled.
+    """
+    start_time = time()
+    enrolled_students = CourseEnrollment.objects.users_enrolled_in(course_id)
+    task_progress = TaskProgress(action_name, enrolled_students.count(), start_time)
+
+    current_step = {'step': 'Calculating students already have certificates'}
+    task_progress.update_task_state(extra_meta=current_step)
+
+    students_require_certs = students_require_certificate(course_id, enrolled_students)
+
+    task_progress.skipped = task_progress.total - len(students_require_certs)
+
+    current_step = {'step': 'Generating Certificates'}
+    task_progress.update_task_state(extra_meta=current_step)
+
+    course = modulestore().get_course(course_id, depth=0)
+    # Generate certificate for each student
+    for student in students_require_certs:
+        task_progress.attempted += 1
+        status = generate_user_certificates(
+            student,
+            course_id,
+            course=course
+        )
+
+        if status in [CertificateStatuses.generating, CertificateStatuses.downloadable]:
+            task_progress.succeeded += 1
+        else:
+            task_progress.failed += 1
+
+    return task_progress.update_task_state(extra_meta=current_step)
+
+
 def cohort_students_and_upload(_xmodule_instance_args, _entry_id, course_id, task_input, action_name):
     """
     Within a given course, cohort students in bulk, then upload the results
@@ -1330,3 +1375,17 @@ def cohort_students_and_upload(_xmodule_instance_args, _entry_id, course_id, tas
     upload_csv_to_report_store(output_rows, 'cohort_results', course_id, start_date)
 
     return task_progress.update_task_state(extra_meta=current_step)
+
+
+def students_require_certificate(course_id, enrolled_students):
+    """ Returns list of students where certificates needs to be generated.
+    Removing those students who have their certificate already generated
+    from total enrolled students for given course.
+    :param course_id:
+    :param enrolled_students:
+    """
+    # compute those students where certificates already generated
+    students_already_have_certs = User.objects.filter(
+        ~Q(generatedcertificate__status=CertificateStatuses.unavailable),
+        generatedcertificate__course_id=course_id)
+    return list(set(enrolled_students) - set(students_already_have_certs))

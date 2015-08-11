@@ -29,6 +29,7 @@ from xmodule.modulestore.django import modulestore
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase, TEST_DATA_SPLIT_MODULESTORE
 from xmodule.modulestore.tests.factories import ItemFactory, LibraryFactory, check_mongo_calls, CourseFactory
 from xmodule.x_module import STUDIO_VIEW, STUDENT_VIEW
+from xmodule.course_module import DEFAULT_START_DATE
 from xblock.exceptions import NoSuchHandlerError
 from xblock_django.user_service import DjangoXBlockUserService
 from opaque_keys.edx.keys import UsageKey, CourseKey
@@ -624,7 +625,7 @@ class TestEditItem(TestEditItemSetup):
             data={'nullout': ['markdown']}
         )
         problem = self.get_item_from_modulestore(self.problem_usage_key, verify_is_draft=True)
-        self.assertIsNone(problem.markdown)
+        self.assertEqual(problem.markdown, '')
 
     def test_date_fields(self):
         """
@@ -1531,11 +1532,13 @@ class TestXBlockInfo(ItemTest):
 
     def test_vertical_xblock_info(self):
         vertical = modulestore().get_item(self.vertical.location)
+
         xblock_info = create_xblock_info(
             vertical,
             include_child_info=True,
             include_children_predicate=ALWAYS,
-            include_ancestor_info=True
+            include_ancestor_info=True,
+            user=self.user
         )
         add_container_page_publishing_info(vertical, xblock_info)
         self.validate_vertical_xblock_info(xblock_info)
@@ -1548,6 +1551,29 @@ class TestXBlockInfo(ItemTest):
             include_children_predicate=ALWAYS
         )
         self.validate_component_xblock_info(xblock_info)
+
+    @ddt.data(ModuleStoreEnum.Type.split, ModuleStoreEnum.Type.mongo)
+    def test_validate_start_date(self, store_type):
+        """
+        Validate if start-date year is less than 1900 reset the date to DEFAULT_START_DATE.
+        """
+        with self.store.default_store(store_type):
+            course = CourseFactory.create()
+            chapter = ItemFactory.create(
+                parent_location=course.location, category='chapter', display_name='Week 1'
+            )
+
+            chapter.start = datetime(year=1899, month=1, day=1, tzinfo=UTC)
+
+            xblock_info = create_xblock_info(
+                chapter,
+                include_child_info=True,
+                include_children_predicate=ALWAYS,
+                include_ancestor_info=True,
+                user=self.user
+            )
+
+            self.assertEqual(xblock_info['start'], DEFAULT_START_DATE.strftime('%Y-%m-%dT%H:%M:%SZ'))
 
     def validate_course_xblock_info(self, xblock_info, has_child_info=True, course_outline=False):
         """
@@ -1658,6 +1684,38 @@ class TestXBlockInfo(ItemTest):
                     )
         else:
             self.assertIsNone(xblock_info.get('child_info', None))
+
+    @patch.dict('django.conf.settings.FEATURES', {'ENABLE_PROCTORED_EXAMS': True})
+    def test_proctored_exam_xblock_info(self):
+        self.course.enable_proctored_exams = True
+        self.course.save()
+        self.store.update_item(self.course, self.user.id)
+
+        course = modulestore().get_item(self.course.location)
+        xblock_info = create_xblock_info(
+            course,
+            include_child_info=True,
+            include_children_predicate=ALWAYS,
+        )
+        # exam proctoring should be enabled and time limited.
+        self.assertEqual(xblock_info['enable_proctored_exams'], True)
+
+        sequential = ItemFactory.create(
+            parent_location=self.chapter.location, category='sequential',
+            display_name="Test Lesson 1", user_id=self.user.id,
+            is_proctored_enabled=True, is_time_limited=True,
+            default_time_limit_minutes=100
+        )
+        sequential = modulestore().get_item(sequential.location)
+        xblock_info = create_xblock_info(
+            sequential,
+            include_child_info=True,
+            include_children_predicate=ALWAYS,
+        )
+        # exam proctoring should be enabled and time limited.
+        self.assertEqual(xblock_info['is_proctored_enabled'], True)
+        self.assertEqual(xblock_info['is_time_limited'], True)
+        self.assertEqual(xblock_info['default_time_limit_minutes'], 100)
 
 
 class TestLibraryXBlockInfo(ModuleStoreTestCase):

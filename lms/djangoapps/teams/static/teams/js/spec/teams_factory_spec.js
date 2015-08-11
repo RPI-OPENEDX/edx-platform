@@ -2,12 +2,18 @@ define(["jquery", "backbone", "teams/js/teams_tab_factory"],
     function($, Backbone, TeamsTabFactory) {
         'use strict';
        
-        describe("teams django app", function() {
+        describe("Teams Tab Factory", function() {
             var teamsTab;
 
             beforeEach(function() {
                 setFixtures('<section class="teams-content"></section>');
-                teamsTab = new TeamsTabFactory();
+                teamsTab = new TeamsTabFactory({
+                    topics: {results: []},
+                    topicsUrl: '',
+                    teamsUrl: '',
+                    maxTeamSize: 9999,
+                    courseID: 'edX/DemoX/Demo_Course'
+                });
             });
 
             afterEach(function() {
@@ -19,7 +25,7 @@ define(["jquery", "backbone", "teams/js/teams_tab_factory"],
             });
 
             it("displays a header", function() {
-                expect($("body").html()).toContain("Course teams are organized");
+                expect($("body").html()).toContain("See all teams in your course, organized by topic");
             });
         });
     }

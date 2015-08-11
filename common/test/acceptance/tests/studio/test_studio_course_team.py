@@ -1,6 +1,7 @@
 """
 Acceptance tests for course in studio
 """
+from flaky import flaky
 from nose.plugins.attrib import attr
 
 from .base_studio_test import StudioCourseTest
@@ -10,6 +11,7 @@ from ...pages.studio.users import CourseTeamPage
 from ...pages.studio.index import DashboardPage
 
 
+@flaky  # TODO fix this, see TNL-2667
 @attr('shard_2')
 class CourseTeamPageTest(StudioCourseTest):
     """ As a course author, I want to be able to add others to my team """
@@ -42,7 +44,7 @@ class CourseTeamPageTest(StudioCourseTest):
     def _go_to_course_team_page(self):
         """ Opens Course Team page """
         self.page.visit()
-        self.page.wait_until_ready()
+        self.page.wait_until_no_loading_indicator()
 
     def _refresh_page(self):
         """

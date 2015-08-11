@@ -67,8 +67,7 @@ def is_youtube_available():
 
     youtube_api_urls = {
         'main': 'https://www.youtube.com/',
-        'player': 'http://www.youtube.com/iframe_api',
-        'metadata': 'http://gdata.youtube.com/feeds/api/videos/',
+        'player': 'https://www.youtube.com/iframe_api',
         # For transcripts, you need to check an actual video, so we will
         # just specify our default video and see if that one is available.
         'transcript': 'http://video.google.com/timedtext?lang=en&v=3_yD_cEKoCk',
@@ -91,7 +90,7 @@ def load_data_str(rel_path):
     Load a file from the "data" directory as a string.
     `rel_path` is the path relative to the data directory.
     """
-    full_path = path(__file__).abspath().dirname() / "data" / rel_path  # pylint: disable=no-value-for-parameter
+    full_path = path(__file__).abspath().dirname() / "data" / rel_path
     with open(full_path) as data_file:
         return data_file.read()
 

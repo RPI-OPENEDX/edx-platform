@@ -86,12 +86,12 @@ function(_, Course, CertificateModel, SignatoryModel, CertificatesCollection, Ce
             num: 'course_num',
             revision: 'course_rev'
         });
-
-
+        window.CMS.User = {isGlobalStaff: true};
     });
 
     afterEach(function() {
         delete window.course;
+        delete window.CMS.User;
     });
 
     describe('Certificate editor view', function() {
@@ -113,7 +113,8 @@ function(_, Course, CertificateModel, SignatoryModel, CertificatesCollection, Ce
             this.newModelOptions = {add: true};
             this.model = new CertificateModel({
                 name: 'Test Name',
-                description: 'Test Description'
+                description: 'Test Description',
+                is_active: true
 
             }, this.newModelOptions);
 
@@ -149,6 +150,12 @@ function(_, Course, CertificateModel, SignatoryModel, CertificatesCollection, Ce
                 expect(this.view.$("[name='certificate-name']").val()).toBe('Test Name');
                 expect(this.view.$("[name='certificate-description']").val()).toBe('Test Description');
                 expect(this.view.$('.action-delete')).toExist();
+            });
+
+            it('should not have delete button if user is not global staff and certificate is active', function() {
+                window.CMS.User = {isGlobalStaff: false};
+                appendSetFixtures(this.view.render().el);
+                expect(this.view.$('.action-delete')).not.toExist();
             });
 
             it('should save properly', function() {

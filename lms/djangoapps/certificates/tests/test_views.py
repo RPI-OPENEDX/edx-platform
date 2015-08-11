@@ -267,6 +267,7 @@ class MicrositeCertificatesViewsTests(ModuleStoreTestCase):
         ]
 
         self.course.certificates = {'certificates': certificates}
+        self.course.cert_html_view_enabled = True
         self.course.save()
         self.store.update_item(self.course, self.user.id)
 
@@ -308,7 +309,7 @@ class MicrositeCertificatesViewsTests(ModuleStoreTestCase):
         self.assertEquals(config.configuration, test_configuration_string)
         test_url = get_certificate_url(
             user_id=self.user.id,
-            course_id=self.course.id.to_deprecated_string()  # pylint: disable=no-member
+            course_id=unicode(self.course.id)
         )
         self._add_course_certificates(count=1, signatory_count=2)
         response = self.client.get(test_url)
@@ -318,6 +319,7 @@ class MicrositeCertificatesViewsTests(ModuleStoreTestCase):
         self.assertIn('Microsite title', response.content)
 
     @patch("microsite_configuration.microsite.get_value", fakemicrosite)
+    @override_settings(FEATURES=FEATURES_WITH_CERTS_ENABLED)
     def test_html_view_microsite_configuration_missing(self):
         test_configuration_string = """{
             "default": {
@@ -341,7 +343,7 @@ class MicrositeCertificatesViewsTests(ModuleStoreTestCase):
         self.assertEquals(config.configuration, test_configuration_string)
         test_url = get_certificate_url(
             user_id=self.user.id,
-            course_id=self.course.id.to_deprecated_string()  # pylint: disable=no-member
+            course_id=unicode(self.course.id)
         )
         self._add_course_certificates(count=1, signatory_count=2)
         response = self.client.get(test_url)
@@ -377,6 +379,7 @@ class CertificatesViewsTests(ModuleStoreTestCase, EventTrackingTestCase):
             course_id=self.course_id,
             verify_uuid=uuid4(),
             download_uuid=uuid4(),
+            download_url="http://www.example.com/certificates/download",
             grade="0.95",
             key='the_key',
             distinction=True,
@@ -420,6 +423,7 @@ class CertificatesViewsTests(ModuleStoreTestCase, EventTrackingTestCase):
         ]
 
         self.course.certificates = {'certificates': certificates}
+        self.course.cert_html_view_enabled = True
         self.course.save()
         self.store.update_item(self.course, self.user.id)
 
@@ -427,7 +431,7 @@ class CertificatesViewsTests(ModuleStoreTestCase, EventTrackingTestCase):
     def test_render_html_view_valid_certificate(self):
         test_url = get_certificate_url(
             user_id=self.user.id,
-            course_id=unicode(self.course.id)  # pylint: disable=no-member
+            course_id=unicode(self.course.id)
         )
         self._add_course_certificates(count=1, signatory_count=2)
         response = self.client.get(test_url)
@@ -449,7 +453,7 @@ class CertificatesViewsTests(ModuleStoreTestCase, EventTrackingTestCase):
     def test_render_html_view_with_valid_signatories(self):
         test_url = get_certificate_url(
             user_id=self.user.id,
-            course_id=self.course.id.to_deprecated_string()  # pylint: disable=no-member
+            course_id=unicode(self.course.id)
         )
         self._add_course_certificates(count=1, signatory_count=2)
         response = self.client.get(test_url)
@@ -465,7 +469,7 @@ class CertificatesViewsTests(ModuleStoreTestCase, EventTrackingTestCase):
         # if certificate in descriptor has not course_title then course name should not be overridden with this title.
         test_url = get_certificate_url(
             user_id=self.user.id,
-            course_id=self.course.id.to_deprecated_string()  # pylint: disable=no-member
+            course_id=unicode(self.course.id)
         )
         test_certificates = [
             {
@@ -478,6 +482,7 @@ class CertificatesViewsTests(ModuleStoreTestCase, EventTrackingTestCase):
             }
         ]
         self.course.certificates = {'certificates': test_certificates}
+        self.course.cert_html_view_enabled = True
         self.course.save()
         self.store.update_item(self.course, self.user.id)
         response = self.client.get(test_url)
@@ -488,7 +493,7 @@ class CertificatesViewsTests(ModuleStoreTestCase, EventTrackingTestCase):
     def test_certificate_view_without_org_logo(self):
         test_url = get_certificate_url(
             user_id=self.user.id,
-            course_id=self.course.id.to_deprecated_string()  # pylint: disable=no-member
+            course_id=unicode(self.course.id)
         )
         test_certificates = [
             {
@@ -500,6 +505,7 @@ class CertificatesViewsTests(ModuleStoreTestCase, EventTrackingTestCase):
             }
         ]
         self.course.certificates = {'certificates': test_certificates}
+        self.course.cert_html_view_enabled = True
         self.course.save()
         self.store.update_item(self.course, self.user.id)
         response = self.client.get(test_url)
@@ -510,7 +516,7 @@ class CertificatesViewsTests(ModuleStoreTestCase, EventTrackingTestCase):
     def test_render_html_view_without_signatories(self):
         test_url = get_certificate_url(
             user_id=self.user.id,
-            course_id=self.course.id.to_deprecated_string()  # pylint: disable=no-member
+            course_id=unicode(self.course)
         )
         self._add_course_certificates(count=1, signatory_count=0)
         response = self.client.get(test_url)
@@ -518,13 +524,12 @@ class CertificatesViewsTests(ModuleStoreTestCase, EventTrackingTestCase):
         self.assertNotIn('Signatory_Title 0', response.content)
 
     @override_settings(FEATURES=FEATURES_WITH_CERTS_DISABLED)
-    def test_render_html_view_invalid_feature_flag(self):
+    def test_render_html_view_disabled_feature_flag_returns_static_url(self):
         test_url = get_certificate_url(
             user_id=self.user.id,
-            course_id=self.course.id.to_deprecated_string()  # pylint: disable=no-member
+            course_id=unicode(self.course.id)
         )
-        response = self.client.get(test_url)
-        self.assertIn('invalid', response.content)
+        self.assertIn(str(self.cert.download_url), test_url)
 
     @override_settings(FEATURES=FEATURES_WITH_CERTS_ENABLED)
     def test_render_html_view_invalid_course_id(self):
@@ -549,7 +554,7 @@ class CertificatesViewsTests(ModuleStoreTestCase, EventTrackingTestCase):
     def test_render_html_view_invalid_user(self):
         test_url = get_certificate_url(
             user_id=111,
-            course_id=self.course.id.to_deprecated_string()  # pylint: disable=no-member
+            course_id=unicode(self.course.id)
         )
         response = self.client.get(test_url)
         self.assertIn('invalid', response.content)
@@ -560,7 +565,7 @@ class CertificatesViewsTests(ModuleStoreTestCase, EventTrackingTestCase):
         self.assertEqual(len(GeneratedCertificate.objects.all()), 0)
         test_url = get_certificate_url(
             user_id=self.user.id,
-            course_id=self.course.id.to_deprecated_string()  # pylint: disable=no-member
+            course_id=unicode(self.course.id)
         )
         response = self.client.get(test_url)
         self.assertIn('invalid', response.content)
@@ -576,7 +581,7 @@ class CertificatesViewsTests(ModuleStoreTestCase, EventTrackingTestCase):
         self._add_course_certificates(count=1, signatory_count=2)
         test_url = get_certificate_url(
             user_id=self.user.id,
-            course_id=self.course.id.to_deprecated_string()  # pylint: disable=no-member
+            course_id=unicode(self.course.id)
         )
         response = self.client.get(test_url + '?preview=honor')
         self.assertNotIn(self.course.display_name, response.content)
@@ -626,7 +631,12 @@ class CertificatesViewsTests(ModuleStoreTestCase, EventTrackingTestCase):
 
     @override_settings(FEATURES=FEATURES_WITH_CERTS_ENABLED)
     def test_evidence_event_sent(self):
-        test_url = get_certificate_url(user_id=self.user.id, course_id=self.course_id) + '?evidence_visit=1'
+        cert_url = get_certificate_url(
+            user_id=self.user.id,
+            course_id=self.course_id
+        )
+        test_url = '{}?evidence_visit=1'.format(cert_url)
+        self._add_course_certificates(count=1, signatory_count=2)
         self.recreate_tracker()
         assertion = BadgeAssertion(
             user=self.user, course_id=self.course_id, mode='honor',

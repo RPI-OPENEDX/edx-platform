@@ -21,7 +21,8 @@ from certificates.api import (
     get_active_web_certificate,
     get_certificate_url,
     generate_user_certificates,
-    emit_certificate_event
+    emit_certificate_event,
+    has_html_certificates_enabled
 )
 from certificates.models import (
     certificate_status_for_student,
@@ -41,6 +42,7 @@ from opaque_keys.edx.locations import SlashSeparatedCourseKey
 from student.models import LinkedInAddToProfileConfiguration
 from util.json_request import JsonResponse, JsonResponseBadRequest
 from util.bad_request_rate_limiter import BadRequestRateLimiter
+from courseware.courses import course_image_url
 
 logger = logging.getLogger(__name__)
 
@@ -103,10 +105,13 @@ def update_certificate(request):
                 key=xqueue_header['lms_key'])
 
         except GeneratedCertificate.DoesNotExist:
-            logger.critical('Unable to lookup certificate\n'
-                            'xqueue_body: {0}\n'
-                            'xqueue_header: {1}'.format(
-                                xqueue_body, xqueue_header))
+            logger.critical(
+                'Unable to lookup certificate\n'
+                'xqueue_body: %s\n'
+                'xqueue_header: %s',
+                xqueue_body,
+                xqueue_header
+            )
 
             return HttpResponse(json.dumps({
                 'return_code': 1,
@@ -137,8 +142,9 @@ def update_certificate(request):
             elif cert.status in [status.deleting]:
                 cert.status = status.deleted
             else:
-                logger.critical('Invalid state for cert update: {0}'.format(
-                    cert.status))
+                logger.critical(
+                    'Invalid state for cert update: %s', cert.status
+                )
                 return HttpResponse(
                     json.dumps({
                         'return_code': 1,
@@ -301,6 +307,8 @@ def _update_certificate_context(context, course, user, user_certificate):
     context['accomplishment_copy_username'] = user.username
     context['accomplishment_copy_course_org'] = course.org
     context['accomplishment_copy_course_name'] = course.display_name
+    context['course_image_url'] = course_image_url(course)
+    context['share_settings'] = settings.FEATURES.get('SOCIAL_SHARING_SETTINGS', {})
     try:
         badge = BadgeAssertion.objects.get(user=user, course_id=course.location.course_key)
     except BadgeAssertion.DoesNotExist:
@@ -439,7 +447,7 @@ def _update_certificate_context(context, course, user, user_certificate):
             user_certificate.mode,
             get_certificate_url(
                 user_id=user.id,
-                course_id=course.id.to_deprecated_string()
+                course_id=unicode(course.id)
             )
         )
 
@@ -503,7 +511,7 @@ def render_html_view(request, user_id, course_id):
     invalid_template_path = 'certificates/invalid.html'
 
     # Kick the user back to the "Invalid" screen if the feature is disabled
-    if not settings.FEATURES.get('CERTIFICATES_HTML_VIEW', False):
+    if not has_html_certificates_enabled(course_id):
         return render_to_response(invalid_template_path, context)
 
     # Load the core building blocks for the view context

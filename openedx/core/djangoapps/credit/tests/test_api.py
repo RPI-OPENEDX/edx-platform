@@ -1,15 +1,20 @@
 """
 Tests for the API functions in the credit app.
 """
-import unittest
 import datetime
 import ddt
+import json
+from mock import patch
 import pytz
+import unittest
+
+from django.conf import settings
+from django.core import mail
 from django.test import TestCase
 from django.test.utils import override_settings
 from django.db import connection, transaction
-from django.core.urlresolvers import reverse
-from django.conf import settings
+from django.core.urlresolvers import reverse, NoReverseMatch
+from unittest import skipUnless
 
 from opaque_keys.edx.keys import CourseKey
 
@@ -30,8 +35,6 @@ from openedx.core.djangoapps.credit.models import (
     CreditRequirementStatus,
     CreditEligibility
 )
-from student.models import CourseEnrollment
-from student.views import _create_credit_availability_message
 from student.tests.factories import UserFactory
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
 from xmodule.modulestore.tests.factories import CourseFactory
@@ -39,13 +42,15 @@ from xmodule.modulestore.tests.factories import CourseFactory
 
 TEST_CREDIT_PROVIDER_SECRET_KEY = "931433d583c84ca7ba41784bad3232e6"
 
+from util.testing import UrlResetMixin
+
 
 @override_settings(CREDIT_PROVIDER_SECRET_KEYS={
     "hogwarts": TEST_CREDIT_PROVIDER_SECRET_KEY,
     "ASU": TEST_CREDIT_PROVIDER_SECRET_KEY,
     "MIT": TEST_CREDIT_PROVIDER_SECRET_KEY
 })
-class CreditApiTestBase(TestCase):
+class CreditApiTestBase(ModuleStoreTestCase):
     """
     Base class for test cases of the credit API.
     """
@@ -53,6 +58,19 @@ class CreditApiTestBase(TestCase):
     PROVIDER_ID = "hogwarts"
     PROVIDER_NAME = "Hogwarts School of Witchcraft and Wizardry"
     PROVIDER_URL = "https://credit.example.com/request"
+    PROVIDER_STATUS_URL = "https://credit.example.com/status"
+    PROVIDER_DESCRIPTION = "A new model for the Witchcraft and Wizardry School System."
+    ENABLE_INTEGRATION = True
+    FULFILLMENT_INSTRUCTIONS = "Sample fulfillment instruction for credit completion."
+    USER_INFO = {
+        "username": "bob",
+        "email": "bob@example.com",
+        "password": "test_bob",
+        "full_name": "Bob",
+        "mailing_address": "123 Fake Street, Cambridge MA",
+        "country": "US",
+    }
+    THUMBNAIL_URL = "https://credit.example.com/logo.png"
 
     def setUp(self, **kwargs):
         super(CreditApiTestBase, self).setUp()
@@ -62,18 +80,21 @@ class CreditApiTestBase(TestCase):
         """Mark the course as a credit """
         credit_course = CreditCourse.objects.create(course_key=self.course_key, enabled=enabled)
 
-        # Associate a credit provider with the course.
-        credit_provider = CreditProvider.objects.create(
+        CreditProvider.objects.create(
             provider_id=self.PROVIDER_ID,
             display_name=self.PROVIDER_NAME,
             provider_url=self.PROVIDER_URL,
-            enable_integration=True,
+            provider_status_url=self.PROVIDER_STATUS_URL,
+            provider_description=self.PROVIDER_DESCRIPTION,
+            enable_integration=self.ENABLE_INTEGRATION,
+            fulfillment_instructions=self.FULFILLMENT_INSTRUCTIONS,
+            thumbnail_url=self.THUMBNAIL_URL
         )
-        credit_course.providers.add(credit_provider)
 
         return credit_course
 
 
+@skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Test only valid in LMS')
 @ddt.ddt
 class CreditRequirementApiTests(CreditApiTestBase):
     """
@@ -118,7 +139,7 @@ class CreditRequirementApiTests(CreditApiTestBase):
                 "namespace": "grade",
                 "name": "grade",
                 "display_name": "Grade",
-                "criteria": {}
+                "criteria": {},
             }
         ]
         with self.assertRaises(InvalidCreditCourse):
@@ -138,7 +159,7 @@ class CreditRequirementApiTests(CreditApiTestBase):
                 "display_name": "Grade",
                 "criteria": {
                     "min_grade": 0.8
-                }
+                },
             },
             {
                 "namespace": "grade",
@@ -146,7 +167,7 @@ class CreditRequirementApiTests(CreditApiTestBase):
                 "display_name": "Grade",
                 "criteria": {
                     "min_grade": 0.9
-                }
+                },
             }
         ]
         api.set_credit_requirements(self.course_key, requirements)
@@ -161,7 +182,7 @@ class CreditRequirementApiTests(CreditApiTestBase):
                 "namespace": "reverification",
                 "name": "midterm",
                 "display_name": "Midterm",
-                "criteria": {}
+                "criteria": {},
             },
             {
                 "namespace": "grade",
@@ -169,7 +190,7 @@ class CreditRequirementApiTests(CreditApiTestBase):
                 "display_name": "Grade",
                 "criteria": {
                     "min_grade": 0.8
-                }
+                },
             }
         ]
         api.set_credit_requirements(self.course_key, requirements)
@@ -191,7 +212,7 @@ class CreditRequirementApiTests(CreditApiTestBase):
                 "display_name": "Grade",
                 "criteria": {
                     "min_grade": 0.8
-                }
+                },
             }
         ]
         api.set_credit_requirements(self.course_key, requirements)
@@ -202,7 +223,7 @@ class CreditRequirementApiTests(CreditApiTestBase):
                 "namespace": "reverification",
                 "name": "i4x://edX/DemoX/edx-reverification-block/assessment_uuid",
                 "display_name": "Assessment 1",
-                "criteria": {}
+                "criteria": {},
             }
         ]
         api.set_credit_requirements(self.course_key, requirements)
@@ -223,34 +244,41 @@ class CreditRequirementApiTests(CreditApiTestBase):
         is_eligible = api.is_user_eligible_for_credit('abc', credit_course.course_key)
         self.assertFalse(is_eligible)
 
-    def test_get_credit_requirement(self):
-        self.add_credit_course()
-        requirements = [
-            {
-                "namespace": "grade",
-                "name": "grade",
-                "display_name": "Grade",
-                "criteria": {
-                    "min_grade": 0.8
-                }
-            }
-        ]
-        requirement = api.get_credit_requirement(self.course_key, "grade", "grade")
-        self.assertIsNone(requirement)
+    def test_eligibility_expired(self):
+        # Configure a credit eligibility that expired yesterday
+        credit_course = self.add_credit_course()
+        CreditEligibility.objects.create(
+            course=credit_course,
+            username="staff",
+            deadline=datetime.datetime.now(pytz.UTC) - datetime.timedelta(days=1)
+        )
 
-        expected_requirement = {
-            "course_key": self.course_key,
-            "namespace": "grade",
-            "name": "grade",
-            "display_name": "Grade",
-            "criteria": {
-                "min_grade": 0.8
-            }
-        }
-        api.set_credit_requirements(self.course_key, requirements)
-        requirement = api.get_credit_requirement(self.course_key, "grade", "grade")
-        self.assertIsNotNone(requirement)
-        self.assertEqual(requirement, expected_requirement)
+        # The user should NOT be eligible for credit
+        is_eligible = api.is_user_eligible_for_credit("staff", credit_course.course_key)
+        self.assertFalse(is_eligible)
+
+        # The eligibility should NOT show up in the user's list of eligibilities
+        eligibilities = api.get_eligibilities_for_user("staff")
+        self.assertEqual(eligibilities, [])
+
+    def test_eligibility_disabled_course(self):
+        # Configure a credit eligibility for a disabled course
+        credit_course = self.add_credit_course()
+        credit_course.enabled = False
+        credit_course.save()
+
+        CreditEligibility.objects.create(
+            course=credit_course,
+            username="staff",
+        )
+
+        # The user should NOT be eligible for credit
+        is_eligible = api.is_user_eligible_for_credit("staff", credit_course.course_key)
+        self.assertFalse(is_eligible)
+
+        # The eligibility should NOT show up in the user's list of eligibilities
+        eligibilities = api.get_eligibilities_for_user("staff")
+        self.assertEqual(eligibilities, [])
 
     def test_set_credit_requirement_status(self):
         self.add_credit_course()
@@ -261,13 +289,13 @@ class CreditRequirementApiTests(CreditApiTestBase):
                 "display_name": "Grade",
                 "criteria": {
                     "min_grade": 0.8
-                }
+                },
             },
             {
                 "namespace": "reverification",
                 "name": "i4x://edX/DemoX/edx-reverification-block/assessment_uuid",
                 "display_name": "Assessment 1",
-                "criteria": {}
+                "criteria": {},
             }
         ]
 
@@ -290,8 +318,13 @@ class CreditRequirementApiTests(CreditApiTestBase):
         self.assertEqual(req_status[0]["status"], "failed")
 
     def test_satisfy_all_requirements(self):
+        """ Test the credit requirements, eligibility notification, email
+        content caching for a credit course.
+        """
         # Configure a course with two credit requirements
         self.add_credit_course()
+        CourseFactory.create(org='edX', number='DemoX', display_name='Demo_Course')
+
         requirements = [
             {
                 "namespace": "grade",
@@ -299,21 +332,23 @@ class CreditRequirementApiTests(CreditApiTestBase):
                 "display_name": "Grade",
                 "criteria": {
                     "min_grade": 0.8
-                }
+                },
             },
             {
                 "namespace": "reverification",
                 "name": "i4x://edX/DemoX/edx-reverification-block/assessment_uuid",
                 "display_name": "Assessment 1",
-                "criteria": {}
+                "criteria": {},
             }
         ]
         api.set_credit_requirements(self.course_key, requirements)
 
+        user = UserFactory.create(username=self.USER_INFO['username'], password=self.USER_INFO['password'])
+
         # Satisfy one of the requirements, but not the other
         with self.assertNumQueries(7):
             api.set_credit_requirement_status(
-                "bob",
+                user.username,
                 self.course_key,
                 requirements[0]["namespace"],
                 requirements[0]["name"]
@@ -323,7 +358,7 @@ class CreditRequirementApiTests(CreditApiTestBase):
         self.assertFalse(api.is_user_eligible_for_credit("bob", self.course_key))
 
         # Satisfy the other requirement
-        with self.assertNumQueries(10):
+        with self.assertNumQueries(11):
             api.set_credit_requirement_status(
                 "bob",
                 self.course_key,
@@ -333,6 +368,51 @@ class CreditRequirementApiTests(CreditApiTestBase):
 
         # Now the user should be eligible
         self.assertTrue(api.is_user_eligible_for_credit("bob", self.course_key))
+
+        # Credit eligibility email should be sent
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].subject, 'Course Credit Eligibility')
+
+        # Now verify them email content
+        email_payload_first = mail.outbox[0].attachments[0]._payload    # pylint: disable=protected-access
+
+        # Test that email has two payloads [multipart (plain text and html
+        # content), attached image]
+        self.assertEqual(len(email_payload_first), 2)
+        # pylint: disable=protected-access
+        self.assertIn('text/plain', email_payload_first[0]._payload[0]['Content-Type'])
+        # pylint: disable=protected-access
+        self.assertIn('text/html', email_payload_first[0]._payload[1]['Content-Type'])
+        self.assertIn('image/png', email_payload_first[1]['Content-Type'])
+
+        # Now check that html email content has same logo image 'Content-ID'
+        # as the attached logo image 'Content-ID'
+        email_image = email_payload_first[1]
+        html_content_first = email_payload_first[0]._payload[1]._payload    # pylint: disable=protected-access
+
+        # strip enclosing angle brackets from 'logo_image' cache 'Content-ID'
+        image_id = email_image.get('Content-ID', '')[1:-1]
+        self.assertIsNotNone(image_id)
+        self.assertIn(image_id, html_content_first)
+
+        # Delete the eligibility entries and satisfy the user's eligibility
+        # requirement again to trigger eligibility notification
+        CreditEligibility.objects.all().delete()
+        with self.assertNumQueries(12):
+            api.set_credit_requirement_status(
+                "bob",
+                self.course_key,
+                requirements[1]["namespace"],
+                requirements[1]["name"]
+            )
+
+        # Credit eligibility email should be sent
+        self.assertEqual(len(mail.outbox), 2)
+        # Now check that on sending eligibility notification again cached
+        # logo image is used
+        email_payload_second = mail.outbox[1].attachments[0]._payload   # pylint: disable=protected-access
+        html_content_second = email_payload_second[0]._payload[1]._payload    # pylint: disable=protected-access
+        self.assertIn(image_id, html_content_second)
 
         # The user should remain eligible even if the requirement status is later changed
         api.set_credit_requirement_status(
@@ -366,13 +446,13 @@ class CreditRequirementApiTests(CreditApiTestBase):
                 "display_name": "Grade",
                 "criteria": {
                     "min_grade": 0.8
-                }
+                },
             },
             {
                 "namespace": "reverification",
                 "name": "i4x://edX/DemoX/edx-reverification-block/assessment_uuid",
                 "display_name": "Assessment 1",
-                "criteria": {}
+                "criteria": {},
             }
         ]
         api.set_credit_requirements(self.course_key, requirements)
@@ -426,6 +506,51 @@ class CreditProviderIntegrationApiTests(CreditApiTestBase):
         # By default, configure the database so that there is a single
         # credit requirement that the user has satisfied (minimum grade)
         self._configure_credit()
+
+    def test_get_credit_providers(self):
+        # The provider should show up in the list
+        result = api.get_credit_providers()
+        self.assertEqual(result, [
+            {
+                "id": self.PROVIDER_ID,
+                "display_name": self.PROVIDER_NAME,
+                "url": self.PROVIDER_URL,
+                "status_url": self.PROVIDER_STATUS_URL,
+                "description": self.PROVIDER_DESCRIPTION,
+                "enable_integration": self.ENABLE_INTEGRATION,
+                "fulfillment_instructions": self.FULFILLMENT_INSTRUCTIONS,
+                "thumbnail_url": self.THUMBNAIL_URL
+            }
+        ])
+
+        # Disable the provider; it should be hidden from the list
+        provider = CreditProvider.objects.get()
+        provider.active = False
+        provider.save()
+
+        result = api.get_credit_providers()
+        self.assertEqual(result, [])
+
+    def test_get_credit_providers_details(self):
+        """Test that credit api method 'test_get_credit_provider_details'
+        returns dictionary data related to provided credit provider.
+        """
+        expected_result = [{
+            "id": self.PROVIDER_ID,
+            "display_name": self.PROVIDER_NAME,
+            "url": self.PROVIDER_URL,
+            "status_url": self.PROVIDER_STATUS_URL,
+            "description": self.PROVIDER_DESCRIPTION,
+            "enable_integration": self.ENABLE_INTEGRATION,
+            "fulfillment_instructions": self.FULFILLMENT_INSTRUCTIONS,
+            "thumbnail_url": self.THUMBNAIL_URL
+        }]
+        result = api.get_credit_providers([self.PROVIDER_ID])
+        self.assertEqual(result, expected_result)
+
+        # now test that user gets empty dict for non existent credit provider
+        result = api.get_credit_providers(['fake_provider_id'])
+        self.assertEqual(result, [])
 
     def test_credit_request(self):
         # Initiate a credit request
@@ -611,7 +736,6 @@ class CreditProviderIntegrationApiTests(CreditApiTestBase):
         self.assertEqual(requests, [])
 
     def _configure_credit(self):
-
         """
         Configure a credit course and its requirements.
 
@@ -645,121 +769,116 @@ class CreditProviderIntegrationApiTests(CreditApiTestBase):
         self.assertEqual(statuses[0]["status"], expected_status)
 
 
-@unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Test only valid in lms')
-class CreditMessagesTests(ModuleStoreTestCase, CreditApiTestBase):
+class CreditApiFeatureFlagTest(UrlResetMixin, TestCase):
     """
-    Test dashboard messages of credit course.
+    Base class to test the credit api urls.
     """
+    def setUp(self, **kwargs):
+        enable_credit_api = kwargs.get('enable_credit_api', False)
+        with patch.dict('django.conf.settings.FEATURES', {'ENABLE_CREDIT_API': enable_credit_api}):
+            super(CreditApiFeatureFlagTest, self).setUp('lms.urls')
 
-    FINAL_GRADE = 0.8
+
+@unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Test only valid in lms')
+class CreditApiFeatureFlagDisabledTests(CreditApiFeatureFlagTest):
+    """
+    Test Python API for credit provider api with feature flag
+    'ENABLE_CREDIT_API' disabled.
+    """
+    PROVIDER_ID = "hogwarts"
 
     def setUp(self):
-        super(CreditMessagesTests, self).setUp()
-        self.student = UserFactory()
-        self.student.set_password('test')  # pylint: disable=no-member
-        self.student.save()  # pylint: disable=no-member
+        super(CreditApiFeatureFlagDisabledTests, self).setUp(enable_credit_api=False)
 
-        self.client.login(username=self.student.username, password='test')
-        # New Course
-        self.course = CourseFactory.create()
-        self.enrollment = CourseEnrollment.enroll(self.student, self.course.id)
-
-    def _set_creditcourse(self):
+    def test_get_credit_provider_details(self):
         """
-        Mark the course to credit
+        Test that 'get_provider_info' api url not found.
+        """
+        with self.assertRaises(NoReverseMatch):
+            reverse('credit:get_provider_info', args=[self.PROVIDER_ID])
+
+
+@unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Test only valid in lms')
+class CreditApiFeatureFlagEnabledTests(CreditApiFeatureFlagTest, CreditApiTestBase):
+    """
+    Test Python API for credit provider api with feature flag
+    'ENABLE_CREDIT_API' enabled.
+    """
+    USER_INFO = {
+        "username": "bob",
+        "email": "bob@example.com",
+        "full_name": "Bob",
+        "mailing_address": "123 Fake Street, Cambridge MA",
+        "country": "US",
+    }
+
+    FINAL_GRADE = 0.95
+
+    def setUp(self):
+        super(CreditApiFeatureFlagEnabledTests, self).setUp(enable_credit_api=True)
+        self.user = UserFactory(
+            username=self.USER_INFO['username'],
+            email=self.USER_INFO['email'],
+        )
+
+        self.user.profile.name = self.USER_INFO['full_name']
+        self.user.profile.mailing_address = self.USER_INFO['mailing_address']
+        self.user.profile.country = self.USER_INFO['country']
+        self.user.profile.save()
+
+        # By default, configure the database so that there is a single
+        # credit requirement that the user has satisfied (minimum grade)
+        self._configure_credit()
+
+    def test_get_credit_provider_details(self):
+        """Test that credit api method 'test_get_credit_provider_details'
+        returns dictionary data related to provided credit provider.
+        """
+        expected_result = {
+            "provider_id": self.PROVIDER_ID,
+            "display_name": self.PROVIDER_NAME,
+            "provider_url": self.PROVIDER_URL,
+            "provider_status_url": self.PROVIDER_STATUS_URL,
+            "provider_description": self.PROVIDER_DESCRIPTION,
+            "enable_integration": self.ENABLE_INTEGRATION,
+            "fulfillment_instructions": self.FULFILLMENT_INSTRUCTIONS,
+            "thumbnail_url": self.THUMBNAIL_URL
+        }
+        path = reverse('credit:get_provider_info', kwargs={'provider_id': self.PROVIDER_ID})
+        result = self.client.get(path)
+        result = json.loads(result.content)
+        self.assertEqual(result, expected_result)
+
+        # now test that user gets empty dict for non existent credit provider
+        path = reverse('credit:get_provider_info', kwargs={'provider_id': 'fake_provider_id'})
+        result = self.client.get(path)
+        result = json.loads(result.content)
+        self.assertEqual(result, {})
+
+    def _configure_credit(self):
+        """
+        Configure a credit course and its requirements.
+
+        By default, add a single requirement (minimum grade)
+        that the user has satisfied.
 
         """
-        # pylint: disable=attribute-defined-outside-init
-        self.first_provider = CreditProvider.objects.create(
-            provider_id="ASU",
-            display_name="Arizona State University",
-            provider_url="google.com",
-            enable_integration=True
-        )  # pylint: disable=attribute-defined-outside-init
-        self.second_provider = CreditProvider.objects.create(
-            provider_id="MIT",
-            display_name="Massachusetts Institute of Technology",
-            provider_url="MIT.com",
-            enable_integration=True
-        )  # pylint: disable=attribute-defined-outside-init
-
-        self.credit_course = CreditCourse.objects.create(course_key=self.course.id, enabled=True)  # pylint: disable=attribute-defined-outside-init
-        self.credit_course.providers.add(self.first_provider)
-        self.credit_course.providers.add(self.second_provider)
-
-    def _set_user_eligible(self, credit_course, username):
-        """
-        Mark the user eligible for credit for the given credit course.
-        """
-        self.eligibility = CreditEligibility.objects.create(username=username, course=credit_course)  # pylint: disable=attribute-defined-outside-init
-
-    def test_user_request_status(self):
-        request_status = api.get_credit_request_status(self.student.username, self.course.id)
-        self.assertEqual(len(request_status), 0)
-
-    def test_credit_messages(self):
-        self._set_creditcourse()
-
+        credit_course = self.add_credit_course()
         requirement = CreditRequirement.objects.create(
-            course=self.credit_course,
+            course=credit_course,
             namespace="grade",
             name="grade",
             active=True
         )
         status = CreditRequirementStatus.objects.create(
-            username=self.student.username,
+            username=self.USER_INFO["username"],
             requirement=requirement,
         )
         status.status = "satisfied"
         status.reason = {"final_grade": self.FINAL_GRADE}
         status.save()
 
-        self._set_user_eligible(self.credit_course, self.student.username)
-        response = self.client.get(reverse("dashboard"))
-        self.assertContains(
-            response,
-            "<b>Congratulations</b> {}, You have meet requirements for credit.".format(
-                self.student.get_full_name()  # pylint: disable=no-member
-            )
+        CreditEligibility.objects.create(
+            username=self.USER_INFO['username'],
+            course=CreditCourse.objects.get(course_key=self.course_key)
         )
-
-        api.create_credit_request(self.course.id, self.first_provider.provider_id, self.student.username)
-
-        response = self.client.get(reverse("dashboard"))
-        self.assertContains(
-            response,
-            'Thank you, your payment is complete, your credit is processing. '
-            'Please see {provider_link} for more information.'.format(
-                provider_link='<a href="#" target="_blank">{provider_name}</a>'.format(
-                    provider_name=self.first_provider.display_name
-                )
-            )
-        )
-
-    def test_query_counts(self):
-        # This check the number of queries executed while rendering the
-        # credit message to display on the dashboard.
-        # - 1 query: Check the user's eligibility.
-        # - 1 query: Get the user credit requests.
-
-        self._set_creditcourse()
-
-        requirement = CreditRequirement.objects.create(
-            course=self.credit_course,
-            namespace="grade",
-            name="grade",
-            active=True
-        )
-        status = CreditRequirementStatus.objects.create(
-            username=self.student.username,
-            requirement=requirement,
-        )
-        status.status = "satisfied"
-        status.reason = {"final_grade": self.FINAL_GRADE}
-        status.save()
-
-        with self.assertNumQueries(2):
-            enrollment_dict = {unicode(self.course.id): self.course}
-            _create_credit_availability_message(
-                enrollment_dict, self.student
-            )

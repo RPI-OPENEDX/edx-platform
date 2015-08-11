@@ -2,7 +2,6 @@
 Acceptance tests for Content Libraries in Studio
 """
 from ddt import ddt, data
-from unittest import skip
 from nose.plugins.attrib import attr
 from flaky import flaky
 
@@ -14,7 +13,7 @@ from ...pages.studio.library import LibraryEditPage
 from ...pages.studio.users import LibraryUsersPage
 
 
-@attr('shard_4')
+@attr('shard_2')
 @ddt
 class LibraryEditPageTest(StudioLibraryTest):
     """
@@ -187,7 +186,7 @@ class LibraryEditPageTest(StudioLibraryTest):
         self.assertIn("Checkboxes", problem_block.name)
 
 
-@attr('shard_4')
+@attr('shard_5')
 @ddt
 class LibraryNavigationTest(StudioLibraryTest):
     """
@@ -523,8 +522,9 @@ class LibraryUsersPageTest(StudioLibraryTest):
         """
         self.page = LibraryUsersPage(self.browser, self.library_key)
         self.page.visit()
-        self.page.wait_until_ready()
+        self.page.wait_until_no_loading_indicator()
 
+    @flaky  # TODO fix this; see TNL-2647
     def test_user_management(self):
         """
         Scenario: Ensure that we can edit the permissions of users.
@@ -534,7 +534,7 @@ class LibraryUsersPageTest(StudioLibraryTest):
         Then there should be one user listed (myself), and I must
         not be able to remove myself or my instructor privilege.
 
-        When I click Add Intructor
+        When I click Add Instructor
         Then I see a form to complete
         When I complete the form and submit it
         Then I can see the new user is listed as a "User" of the library

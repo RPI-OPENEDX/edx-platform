@@ -1,7 +1,6 @@
 ---
 metadata:
     display_name: Text Input with Hints and Feedback
-    tab: hint
     markdown: | 
 
         You can provide feedback for the correct answer in text input problems, as well as for specific incorrect answers.
@@ -24,6 +23,7 @@ metadata:
         ||Consider the square miles, not population.||
         ||Consider all 50 states, not just the continental United States.||
 
+hinted: true
 data: |
   <problem>
 

@@ -3,13 +3,13 @@
 End-to-end tests for the LMS.
 """
 
+from datetime import datetime
 from flaky import flaky
 from textwrap import dedent
 from unittest import skip
 from nose.plugins.attrib import attr
 
 from bok_choy.promise import EmptyPromise
-from bok_choy.web_app_test import WebAppTest
 from ..helpers import (
     UniqueCourseTest,
     EventsTestMixin,
@@ -18,6 +18,7 @@ from ..helpers import (
     select_option_by_value,
     element_has_text
 )
+from ...pages.lms import BASE_URL
 from ...pages.lms.account_settings import AccountSettingsPage
 from ...pages.lms.auto_auth import AutoAuthPage
 from ...pages.lms.create_mode import ModeCreationPage
@@ -164,9 +165,43 @@ class LoginFromCombinedPageTest(UniqueCourseTest):
 
         self.dashboard_page.wait_for_page()
 
-        # Now unlink the account (To test the account settings view and also to prevent cross-test side effects)
+        self._unlink_dummy_account()
+
+    def test_hinted_login(self):
+        """ Test the login page when coming from course URL that specified which third party provider to use """
+        # Create a user account and link it to third party auth with the dummy provider:
+        AutoAuthPage(self.browser, course_id=self.course_id).visit()
+        self._link_dummy_account()
+        LogoutPage(self.browser).visit()
+
+        # When not logged in, try to load a course URL that includes the provider hint ?tpa_hint=...
+        course_page = CoursewarePage(self.browser, self.course_id)
+        self.browser.get(course_page.url + '?tpa_hint=oa2-dummy')
+
+        # We should now be redirected to the login page
+        self.login_page.wait_for_page()
+        self.assertIn("Would you like to sign in using your Dummy credentials?", self.login_page.hinted_login_prompt)
+        self.login_page.click_third_party_dummy_provider()
+
+        # We should now be redirected to the course page
+        course_page.wait_for_page()
+
+        self._unlink_dummy_account()
+
+    def _link_dummy_account(self):
+        """ Go to Account Settings page and link the user's account to the Dummy provider """
         account_settings = AccountSettingsPage(self.browser).visit()
-        field_id = "auth-dummy"
+        field_id = "auth-oa2-dummy"
+        account_settings.wait_for_field(field_id)
+        self.assertEqual("Link", account_settings.link_title_for_link_field(field_id))
+        account_settings.click_on_link_in_link_field(field_id)
+        account_settings.wait_for_link_title_for_link_field(field_id, "Unlink")
+
+    def _unlink_dummy_account(self):
+        """ Verify that the 'Dummy' third party auth provider is linked, then unlink it """
+        # This must be done after linking the account, or we'll get cross-test side effects
+        account_settings = AccountSettingsPage(self.browser).visit()
+        field_id = "auth-oa2-dummy"
         account_settings.wait_for_field(field_id)
         self.assertEqual("Unlink", account_settings.link_title_for_link_field(field_id))
         account_settings.click_on_link_in_link_field(field_id)
@@ -234,12 +269,6 @@ class RegisterFromCombinedPageTest(UniqueCourseTest):
         course_names = self.dashboard_page.wait_for_page().available_courses
         self.assertIn(self.course_info["display_name"], course_names)
 
-        self.assertEqual("want to change your account settings?", self.dashboard_page.sidebar_menu_title.lower())
-        self.assertEqual(
-            "click the arrow next to your username above.",
-            self.dashboard_page.sidebar_menu_description.lower()
-        )
-
     def test_register_failure(self):
         # Navigate to the registration page
         self.register_page.visit()
@@ -305,7 +334,7 @@ class RegisterFromCombinedPageTest(UniqueCourseTest):
 
         # Now unlink the account (To test the account settings view and also to prevent cross-test side effects)
         account_settings = AccountSettingsPage(self.browser).visit()
-        field_id = "auth-dummy"
+        field_id = "auth-oa2-dummy"
         account_settings.wait_for_field(field_id)
         self.assertEqual("Unlink", account_settings.link_title_for_link_field(field_id))
         account_settings.click_on_link_in_link_field(field_id)
@@ -1125,3 +1154,35 @@ class EntranceExamTest(UniqueCourseTest):
             css_selector=entrance_exam_link_selector,
             text='Entrance Exam'
         ))
+
+
+@attr('shard_5')
+class NotLiveRedirectTest(UniqueCourseTest):
+    """
+    Test that a banner is shown when the user is redirected to
+    the dashboard from a non-live course.
+    """
+
+    def setUp(self):
+        """Create a course that isn't live yet and enroll for it."""
+        super(NotLiveRedirectTest, self).setUp()
+        CourseFixture(
+            self.course_info['org'], self.course_info['number'],
+            self.course_info['run'], self.course_info['display_name'],
+            start_date=datetime(year=2099, month=1, day=1)
+        ).install()
+        AutoAuthPage(self.browser, course_id=self.course_id).visit()
+
+    def test_redirect_banner(self):
+        """
+        Navigate to the course info page, then check that we're on the
+        dashboard page with the appropriate message.
+        """
+        url = BASE_URL + "/courses/" + self.course_id + "/" + 'info'
+        self.browser.get(url)
+        page = DashboardPage(self.browser)
+        page.wait_for_page()
+        self.assertIn(
+            'The course you are looking for does not start until',
+            page.banner_text
+        )
