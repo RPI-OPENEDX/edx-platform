@@ -7,4 +7,11 @@
 <h1>${_("Page not found")}</h1>
 <p>${_('The page that you were looking for was not found. Go back to the {link_start}homepage{link_end} or let us know about any pages that may have been moved at {email}.').format(
     link_start='<a href="/">', link_end='</a>', email='<a href="mailto:{email}">{email}</a>'.format(email=settings.TECH_SUPPORT_EMAIL))}</p>
+    
+<script src='https://raw.githubusercontent.com/snaptortoise/konami-js/master/konami.js'></script>
+<script>
+var easter_egg = new Konami();
+easter_egg.code = function() { document.getElementById("content").innerHTML="<audio src='http://www.midiworld.com/midis/a/65c737bb79.mp3' autoplay Loop></audio><img src='https://33.media.tumblr.com/faaee0c96c721803c0788281397664c3/tumblr_inline_mj5g0j29US1r08p6g.gif' style='width:100vw;heigh:100vw;'>" }
+easter_egg.load();
+</script>         
 </section>
