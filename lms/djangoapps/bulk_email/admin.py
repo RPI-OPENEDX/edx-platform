@@ -63,7 +63,7 @@ class CourseAuthorizationAdmin(admin.ModelAdmin):
     form = CourseAuthorizationAdminForm
     fieldsets = (
         (None, {
-            'fields': ('course_id', 'email_disabled'),
+            'fields': ('course_id', 'email_enabled'),
             'description': '''
 Enter a course id in the following form: Org/Course/CourseRun, eg MITx/6.002x/2012_Fall
 Do not enter leading or trailing slashes. There is no need to surround the course ID with quotes.
