@@ -63,13 +63,13 @@ class CourseAuthorizationAdmin(admin.ModelAdmin):
     form = CourseAuthorizationAdminForm
     fieldsets = (
         (None, {
-            'fields': ('course_id', 'email_enabled'),
+            'fields': ('course_id', 'email_disabled'),
             'description': '''
 Enter a course id in the following form: Org/Course/CourseRun, eg MITx/6.002x/2012_Fall
 Do not enter leading or trailing slashes. There is no need to surround the course ID with quotes.
 Validation will be performed on the course name, and if it is invalid, an error message will display.
 
-To enable email for the course, check the "Email enabled" box, then click "Save".
+To disable email for the course, check the "Email enabled" box, then click "Save".
 '''
         }),
     )
