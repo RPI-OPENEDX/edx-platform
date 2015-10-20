@@ -86,7 +86,8 @@ class TestCreateAccount(TestCase):
     def test_marketing_cookie(self):
         response = self.client.post(self.url, self.params)
         self.assertEqual(response.status_code, 200)
-        self.assertIn(settings.EDXMKTG_COOKIE_NAME, self.client.cookies)
+        self.assertIn(settings.EDXMKTG_LOGGED_IN_COOKIE_NAME, self.client.cookies)
+        self.assertIn(settings.EDXMKTG_USER_INFO_COOKIE_NAME, self.client.cookies)
 
     @unittest.skipUnless(
         "microsite_configuration.middleware.MicrositeMiddleware" in settings.MIDDLEWARE_CLASSES,
@@ -309,7 +310,7 @@ class TestCreateAccountValidation(TestCase):
 
         # Invalid
         params["username"] = "invalid username"
-        assert_username_error("Username should only consist of A-Z and 0-9, with no spaces.")
+        assert_username_error("Usernames must contain only letters, numbers, underscores (_), and hyphens (-).")
 
     def test_email(self):
         params = dict(self.minimal_params)

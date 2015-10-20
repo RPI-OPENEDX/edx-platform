@@ -86,7 +86,8 @@ log = logging.getLogger(__name__)
 _ = lambda text: text
 
 
-class VideoModule(VideoFields, VideoTranscriptsMixin, VideoStudentViewHandlers, XModule):
+@XBlock.wants('settings')
+class VideoModule(VideoFields, VideoTranscriptsMixin, VideoStudentViewHandlers, XModule, LicenseMixin):
     """
     XML source example:
         <video show_captions="true"
@@ -184,7 +185,8 @@ class VideoModule(VideoFields, VideoTranscriptsMixin, VideoStudentViewHandlers, 
         return track_url, transcript_language, sorted_languages
 
     def get_html(self):
-        transcript_download_format = self.transcript_download_format if not (self.download_track and self.track) else None
+        track_status = (self.download_track and self.track)
+        transcript_download_format = self.transcript_download_format if not track_status else None
         sources = filter(None, self.html5_sources)
 
         download_video_link = None
@@ -261,6 +263,15 @@ class VideoModule(VideoFields, VideoTranscriptsMixin, VideoStudentViewHandlers, 
             cdn_exp_group = None
 
         self.youtube_streams = youtube_streams or create_youtube_string(self)  # pylint: disable=W0201
+
+        settings_service = self.runtime.service(self, 'settings')
+
+        yt_api_key = None
+        if settings_service:
+            xblock_settings = settings_service.get_settings_bucket(self)
+            if xblock_settings and 'YOUTUBE_API_KEY' in xblock_settings:
+                yt_api_key = xblock_settings['YOUTUBE_API_KEY']
+
         metadata = {
             'saveStateUrl': self.system.ajax_url + '/save_user_state',
             'autoplay': settings.FEATURES.get('AUTOPLAY_VIDEOS', False),
@@ -286,7 +297,9 @@ class VideoModule(VideoFields, VideoTranscriptsMixin, VideoStudentViewHandlers, 
             'ytTestTimeout': 1500,
 
             'ytApiUrl': settings.YOUTUBE['API'],
-            'ytTestUrl': settings.YOUTUBE['TEST_URL'],
+            'ytMetadataUrl': settings.YOUTUBE['METADATA_URL'],
+            'ytKey': yt_api_key,
+
             'transcriptTranslationUrl': self.runtime.handler_url(
                 self, 'transcript', 'translation/__lang__'
             ).rstrip('/?'),
@@ -332,12 +345,14 @@ class VideoModule(VideoFields, VideoTranscriptsMixin, VideoStudentViewHandlers, 
 @XBlock.wants("request_cache")
 @XBlock.wants("settings")
 class VideoDescriptor(VideoFields, VideoTranscriptsMixin, VideoStudioViewHandlers,
-                      TabsEditingDescriptor, EmptyDataRawDescriptor):
+                      TabsEditingDescriptor, EmptyDataRawDescriptor, LicenseMixin):
     """
     Descriptor for `VideoModule`.
     """
     module_class = VideoModule
     transcript = module_attr('transcript')
+
+    show_in_read_only_mode = True
 
     tabs = [
         {
@@ -381,9 +396,10 @@ class VideoDescriptor(VideoFields, VideoTranscriptsMixin, VideoStudioViewHandler
                 if not self.fields['download_video'].is_set_on(self):
                     self.download_video = True
 
-        # Set download_video field to default value if its not explicitly set for backward compatibility.
+        # Force download_video field to default value if it's not explicitly set for backward compatibility.
         if not self.fields['download_video'].is_set_on(self):
             self.download_video = self.download_video
+            self.force_save_fields(['download_video'])
 
         # for backward compatibility.
         # If course was existed and was not re-imported by the moment of adding `download_track` field,
@@ -443,7 +459,11 @@ class VideoDescriptor(VideoFields, VideoTranscriptsMixin, VideoStudioViewHandler
         languages.sort(key=lambda l: l['label'])
         editable_fields['transcripts']['languages'] = languages
         editable_fields['transcripts']['type'] = 'VideoTranslations'
-        editable_fields['transcripts']['urlRoot'] = self.runtime.handler_url(self, 'studio_transcript', 'translation').rstrip('/?')
+        editable_fields['transcripts']['urlRoot'] = self.runtime.handler_url(
+            self,
+            'studio_transcript',
+            'translation'
+        ).rstrip('/?')
         editable_fields['handout']['type'] = 'FileUploader'
 
         return editable_fields
@@ -553,6 +573,9 @@ class VideoDescriptor(VideoFields, VideoTranscriptsMixin, VideoStudioViewHandler
         youtube_id_1_0 = metadata_fields['youtube_id_1_0']
 
         def get_youtube_link(video_id):
+            """
+            Returns the fully-qualified YouTube URL for the given video identifier
+            """
             # First try a lookup in VAL. If we have a YouTube entry there, it overrides the
             # one passed in.
             if self.edx_video_id and edxval_api:
@@ -567,7 +590,7 @@ class VideoDescriptor(VideoFields, VideoTranscriptsMixin, VideoStudioViewHandler
 
         _ = self.runtime.service(self, "i18n").ugettext
         video_url.update({
-            'help': _('The URL for your video. This can be a YouTube URL or a link to an .mp4, .ogg, or .webm video file hosted elsewhere on the Internet.'),
+            'help': _('The URL for your video. This can be a YouTube URL or a link to an .mp4, .ogg, or .webm video file hosted elsewhere on the Internet.'),  # pylint: disable=line-too-long
             'display_name': _('Default Video URL'),
             'field_name': 'video_url',
             'type': 'VideoList',

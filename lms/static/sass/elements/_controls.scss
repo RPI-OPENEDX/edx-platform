@@ -294,8 +294,8 @@
   @extend %btn-primary;
   border: 1px solid darken($action-primary-bg,10%);
   border-radius: 3px;
-  padding: ($baseline/2) $baseline;
-  background-color: $action-primary-fg;
+  padding: 8px $baseline;
+  background-color: transparent;
   color: darken($action-primary-bg,10%);
   text-align: center;
 
@@ -339,6 +339,32 @@
   }
 }
 
+%btn-pl-secondary-base {
+  @extend %btn-pl-default-base;
+  @include transition(border $tmg-f2 ease-in-out);
+  border: 1px solid transparent;
+  color: $action-primary-bg;
+
+  &:hover {
+    border: 1px solid $gray-l2;
+    background-color: transparent;
+    color: $action-primary-bg;
+  }
+}
+
+%btn-pl-elevated-alt {
+  @extend %btn-pl-default-base;
+  box-shadow: 0 3px 0 0 $gray-l4;
+  border: 1px solid $gray-l4;
+
+  &:hover {
+    box-shadow: 0 3px 0 0 $action-primary-bg;
+    border: 1px solid $action-primary-bg;
+    background-color: lighten($action-primary-bg,20%);
+    color: $white;
+  }
+}
+
 // ====================
 
   // application: canned actions
@@ -377,3 +403,37 @@
       margin-bottom: none;
     }
   }
+
+  .btn-secondary {
+    @extend %btn-pl-secondary-base;
+
+    background-image: none;
+
+    &:focus,
+    &:hover {
+      background-image: none !important;
+      background-color: transparent !important;
+      color: $link-color;
+    }
+  }
+
+.btn-link {
+    @extend %shame-link-text;
+
+    // reset of inherited buttons
+    border-radius: 0;
+    border-color: $transparent;
+    padding: 1px;
+    background: $transparent;
+    background-image: none;
+
+    @extend %t-action3;
+    @extend %t-strong;
+
+    &:focus,
+    &:hover {
+        background-image: none !important;
+        background-color: $transparent !important;
+        box-shadow: none !important;
+    }
+}

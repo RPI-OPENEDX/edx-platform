@@ -7,7 +7,7 @@ from django.utils.translation import ugettext as _
 from django.template.defaultfilters import escapejs
 %>
 
-<!-- TODO decode course # from context_course into title -->
+## TODO decode course # from context_course into title.
 <%block name="title">${_("Course Updates")}</%block>
 <%block name="bodyclass">is-signedin course course-info updates view-updates</%block>
 
@@ -53,7 +53,7 @@ from django.template.defaultfilters import escapejs
   <div class="wrapper-content wrapper">
     <section class="content">
       <div class="introduction">
-        <p clas="copy">${_('Use course updates to notify students of important dates or exams, highlight particular discussions in the forums, announce schedule changes, and respond to student questions. You add or edit updates in HTML.')}</p>
+        <p class="copy">${_('Use course updates to notify students of important dates or exams, highlight particular discussions in the forums, announce schedule changes, and respond to student questions. You add or edit updates in HTML.')}</p>
       </div>
     </section>
   </div>

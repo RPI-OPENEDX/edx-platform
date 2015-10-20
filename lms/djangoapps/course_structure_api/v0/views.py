@@ -6,7 +6,8 @@ import logging
 
 from django.conf import settings
 from django.http import Http404
-from rest_framework.authentication import OAuth2Authentication, SessionAuthentication
+from rest_framework.authentication import SessionAuthentication
+from rest_framework_oauth.authentication import OAuth2Authentication
 from rest_framework.exceptions import AuthenticationFailed, ParseError
 from rest_framework.generics import RetrieveAPIView, ListAPIView
 from rest_framework.permissions import IsAuthenticated
@@ -15,14 +16,13 @@ from rest_framework.reverse import reverse
 from xmodule.modulestore.django import modulestore
 from opaque_keys.edx.keys import CourseKey
 
-from course_structure_api.v0 import api, serializers
-from course_structure_api.v0.errors import CourseNotFoundError, CourseStructureNotAvailableError
+from course_structure_api.v0 import serializers
 from courseware import courses
 from courseware.access import has_access
 from courseware.model_data import FieldDataCache
 from courseware.module_render import get_module_for_descriptor
 from openedx.core.lib.api.view_utils import view_course_access, view_auth_classes
-from openedx.core.lib.api.serializers import PaginationSerializer
+from openedx.core.djangoapps.content.course_structures.api.v0 import api, errors
 from student.roles import CourseInstructorRole, CourseStaffRole
 from util.module_utils import get_dynamic_descriptor_children
 
@@ -73,7 +73,7 @@ class CourseViewMixin(object):
                 self.course_key = CourseKey.from_string(course_id)
                 self.check_course_permissions(self.request.user, self.course_key)
                 return func(self, *args, **kwargs)
-            except CourseNotFoundError:
+            except errors.CourseNotFoundError:
                 raise Http404
 
         return func_wrapper
@@ -83,9 +83,11 @@ class CourseViewMixin(object):
         Determines if the user is staff or an instructor for the course.
         Always returns True if DEBUG mode is enabled.
         """
-        return (settings.DEBUG
-                or has_access(user, CourseStaffRole.ROLE, course)
-                or has_access(user, CourseInstructorRole.ROLE, course))
+        return bool(
+            settings.DEBUG
+            or has_access(user, CourseStaffRole.ROLE, course)
+            or has_access(user, CourseInstructorRole.ROLE, course)
+        )
 
     def check_course_permissions(self, user, course):
         """
@@ -155,13 +157,10 @@ class CourseList(CourseViewMixin, ListAPIView):
             * end: The course end date. If course end date is not specified, the
               value is null.
     """
-    paginate_by = 10
-    paginate_by_param = 'page_size'
-    pagination_serializer_class = PaginationSerializer
     serializer_class = serializers.CourseSerializer
 
     def get_queryset(self):
-        course_ids = self.request.QUERY_PARAMS.get('course_id', None)
+        course_ids = self.request.query_params.get('course_id', None)
 
         results = []
         if course_ids:
@@ -255,14 +254,14 @@ class CourseStructure(CourseViewMixin, RetrieveAPIView):
           * format: The assignment type.
 
           * children: If the block has child blocks, a list of IDs of the child
-            blocks.
+            blocks in the order they appear in the course.
     """
 
     @CourseViewMixin.course_check
     def get(self, request, **kwargs):
         try:
             return Response(api.course_structure(self.course_key))
-        except CourseStructureNotAvailableError:
+        except errors.CourseStructureNotAvailableError:
             # If we don't have data stored, we will try to regenerate it, so
             # return a 503 and as them to retry in 2 minutes.
             return Response(status=503, headers={'Retry-After': '120'})
@@ -319,7 +318,7 @@ class CourseBlocksAndNavigation(ListAPIView):
         GET api/course_structure/v0/courses/{course_id}/blocks+navigation/
            &block_count=video
            &block_json={"video":{"profiles":["mobile_low"]}}
-           &fields=graded,format,responsive_ui
+           &fields=graded,format,multi_device
 
     **Parameters**:
 
@@ -333,9 +332,9 @@ class CourseBlocksAndNavigation(ListAPIView):
           Example: block_count="video,problem"
 
         * fields: (list) Indicates which additional fields to return for each block.
-          Default is "children,graded,format,responsive_ui"
+          Default is "children,graded,format,multi_device"
 
-          Example: fields=graded,format,responsive_ui
+          Example: fields=graded,format,multi_device
 
         * navigation_depth (integer) Indicates how far deep to traverse into the course hierarchy before bundling
           all the descendants.
@@ -385,8 +384,9 @@ class CourseBlocksAndNavigation(ListAPIView):
             Possible values can be "Homework", "Lab", "Midterm Exam", and "Final Exam".
             Returned only if "format" is included in the "fields" parameter.
 
-          * responsive_ui: (boolean) Whether or not the block's rendering obtained via block_url is responsive.
-            Returned only if "responsive_ui" is included in the "fields" parameter.
+          * multi_device: (boolean) Whether or not the block's rendering obtained via block_url has support
+            for multiple devices.
+            Returned only if "multi_device" is included in the "fields" parameter.
 
         * navigation: A dictionary that maps block IDs to a collection of navigation information about each block.
           Each block contains the following fields. Returned only if using the "navigation" endpoint.
@@ -403,7 +403,7 @@ class CourseBlocksAndNavigation(ListAPIView):
         """
         A class for encapsulating the request information, including what optional fields are requested.
         """
-        DEFAULT_FIELDS = "children,graded,format,responsive_ui"
+        DEFAULT_FIELDS = "children,graded,format,multi_device"
 
         def __init__(self, request, course):
             self.request = request
@@ -414,10 +414,6 @@ class CourseBlocksAndNavigation(ListAPIView):
             try:
                 # fields
                 self.fields = set(request.GET.get('fields', self.DEFAULT_FIELDS).split(","))
-
-                # children
-                self.children = 'children' in self.fields
-                self.fields.discard('children')
 
                 # block_count
                 self.block_count = request.GET.get('block_count', "")
@@ -487,7 +483,7 @@ class CourseBlocksAndNavigation(ListAPIView):
                 self.descendants_of_parent = parent_block_info.descendants_of_self
 
                 # add ourselves to the parent's children, if requested.
-                if request_info.children:
+                if 'children' in request_info.fields:
                     parent_block_info.value.setdefault("children", []).append(unicode(block.location))
 
             # the block's data to include in the response
@@ -560,7 +556,12 @@ class CourseBlocksAndNavigation(ListAPIView):
         )
 
         # verify the user has access to this block
-        if not has_access(request_info.request.user, 'load', block_info.block, course_key=request_info.course.id):
+        if (block_info.block is None or not has_access(
+                request_info.request.user,
+                'load',
+                block_info.block,
+                course_key=request_info.course.id
+        )):
             return
 
         # add the block's value to the result
@@ -584,6 +585,13 @@ class CourseBlocksAndNavigation(ListAPIView):
 
         # block JSON data
         self.add_block_json(request_info, block_info)
+
+        # multi-device support
+        if 'multi_device' in request_info.fields:
+            block_info.value['multi_device'] = block_info.block.has_support(
+                getattr(block_info.block, 'student_view', None),
+                'multi_device'
+            )
 
         # additional fields
         self.add_additional_fields(request_info, block_info)
@@ -660,7 +668,6 @@ class CourseBlocksAndNavigation(ListAPIView):
     FIELD_MAP = {
         'graded': BlockApiField(block_field_name='graded', api_field_default=False),
         'format': BlockApiField(block_field_name='format', api_field_default=None),
-        'responsive_ui': BlockApiField(block_field_name='has_responsive_ui', api_field_default=False),
     }
 
     def add_additional_fields(self, request_info, block_info):

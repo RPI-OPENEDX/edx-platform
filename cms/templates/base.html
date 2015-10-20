@@ -36,22 +36,16 @@ import json
   </head>
 
   <body class="${static.dir_rtl()} <%block name='bodyclass'></%block> lang_${LANGUAGE_CODE}">
-  <%block name="view_notes"></%block>
+    <%block name="view_notes"></%block>
 
     <a class="nav-skip" href="#content">${_("Skip to main content")}</a>
 
     <script type="text/javascript">
       window.baseUrl = ${json.dumps(settings.STATIC_URL)};
-      window.TENDER_SUBDOMAIN = ${json.dumps(settings.TENDER_SUBDOMAIN)};
       var require = {baseUrl: window.baseUrl};
     </script>
     <script type="text/javascript" src="${static.url("js/vendor/require.js")}"></script>
-    <script type="text/javascript" src="${static.url("require-config.js")}"></script>
-
-    ## js templates
-    <script id="system-feedback-tpl" type="text/template">
-      <%static:include path="js/system-feedback.underscore" />
-    </script>
+    <script type="text/javascript" src="${static.url("cms/js/require-config.js")}"></script>
 
     <!-- view -->
     <div class="wrapper wrapper-view" dir="${static.dir_rtl()}">
@@ -70,7 +64,6 @@ import json
         <%include file="widgets/sock.html" args="online_help_token=online_help_token" />
       % endif
       <%include file="widgets/footer.html" />
-      <%include file="widgets/tender.html" />
 
       <div id="page-notification"></div>
     </div>
@@ -81,7 +74,7 @@ import json
 
     <%block name="jsextra"></%block>
     <script type="text/javascript">
-      require(['js/factories/common_deps'], function () {
+      require(['common/js/common_libraries'], function () {
           require(['js/factories/base'], function () {
             % if context_course:
               require(['js/factories/course'], function(CourseFactory) {
@@ -91,6 +84,7 @@ import json
                       url_name: "${context_course.location.name | h}",
                       org: "${context_course.location.org | h}",
                       num: "${context_course.location.course | h}",
+                      display_course_number: "${_(context_course.display_coursenumber)}",
                       revision: "${context_course.location.revision | h}"
                   });
               });

@@ -3,7 +3,7 @@ Unit test tasks
 """
 import os
 import sys
-from paver.easy import sh, task, cmdopts, needs, call_task, no_help
+from paver.easy import sh, task, cmdopts, needs, call_task
 from pavelib.utils.test import suites
 from pavelib.utils.envs import Env
 from optparse import make_option
@@ -11,7 +11,7 @@ from optparse import make_option
 try:
     from pygments.console import colorize
 except ImportError:
-    colorize = lambda color, text: text  # pylint: disable-msg=invalid-name
+    colorize = lambda color, text: text  # pylint: disable=invalid-name
 
 __test__ = False  # do not collect
 
@@ -25,7 +25,7 @@ __test__ = False  # do not collect
     ("system=", "s", "System to act on"),
     ("test_id=", "t", "Test id"),
     ("failed", "f", "Run only failed tests"),
-    ("fail_fast", "x", "Run only failed tests"),
+    ("fail_fast", "x", "Fail suite on first failed test"),
     ("fasttest", "a", "Run without collectstatic"),
     ('extra_args=', 'e', 'adds as extra args to the test command'),
     ('cov_args=', 'c', 'adds as args to coverage for the test run'),
@@ -194,44 +194,31 @@ def coverage(options):
     """
     Build the html, xml, and diff coverage reports
     """
-    compare_branch = getattr(options, 'compare_branch', 'origin/master')
+    report_dir = Env.REPORT_DIR
+    rcfile = Env.PYTHON_COVERAGERC
 
-    for directory in Env.LIB_TEST_DIRS + ['cms', 'lms']:
-        report_dir = Env.REPORT_DIR / directory
+    if not (report_dir / '.coverage').isfile():
+        # This may be that the coverage files were generated using -p,
+        # try to combine them to the one file that we need.
+        sh("coverage combine --rcfile={}".format(rcfile))
 
-        if (report_dir / '.coverage').isfile():
-            # Generate the coverage.py HTML report
-            sh("coverage html --rcfile={dir}/.coveragerc".format(dir=directory))
+    if not os.path.getsize(report_dir / '.coverage') > 50:
+        # Check if the .coverage data file is larger than the base file,
+        # because coverage combine will always at least make the "empty" data
+        # file even when there isn't any data to be combined.
+        err_msg = colorize(
+            'red',
+            "No coverage info found.  Run `paver test` before running "
+            "`paver coverage`.\n"
+        )
+        sys.stderr.write(err_msg)
+        return
 
-            # Generate the coverage.py XML report
-            sh("coverage xml -o {report_dir}/coverage.xml --rcfile={dir}/.coveragerc".format(
-                report_dir=report_dir,
-                dir=directory
-            ))
-
+    # Generate the coverage.py XML report
+    sh("coverage xml --rcfile={}".format(rcfile))
+    # Generate the coverage.py HTML report
+    sh("coverage html --rcfile={}".format(rcfile))
     call_task('diff_coverage', options=dict(options))
-
-
-@no_help
-@task
-@needs('pavelib.prereqs.install_prereqs')
-def combine_jenkins_coverage():
-    """
-    Combine coverage reports from jenkins build flow.
-    """
-    coveragerc = Env.REPO_ROOT / 'test_root' / '.jenkins-coveragerc'
-
-    for directory in Env.LIB_TEST_DIRS + ['cms', 'lms']:
-        report_dir = Env.REPORT_DIR / directory
-
-        # Only try to combine the coverage if we've run the tests.
-        if report_dir.isdir():
-            sh(
-                "cd {} && coverage combine --rcfile={}".format(
-                    report_dir,
-                    coveragerc,
-                )
-            )
 
 
 @task
@@ -255,7 +242,8 @@ def diff_coverage(options):
     if not xml_reports:
         err_msg = colorize(
             'red',
-            "No coverage info found.  Run `paver test` before running `paver coverage`.\n"
+            "No coverage info found.  Run `paver test` before running "
+            "`paver coverage`.\n"
         )
         sys.stderr.write(err_msg)
     else:
@@ -272,4 +260,4 @@ def diff_coverage(options):
             )
         )
 
-        print("\n")
+        print "\n"

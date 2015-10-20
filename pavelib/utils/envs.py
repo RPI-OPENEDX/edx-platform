@@ -6,7 +6,7 @@ import os
 import sys
 import json
 from lazy import lazy
-from path import path
+from path import Path as path
 import memcache
 
 
@@ -21,6 +21,9 @@ class Env(object):
     # Reports Directory
     REPORT_DIR = REPO_ROOT / 'reports'
     METRICS_DIR = REPORT_DIR / 'metrics'
+
+    # Python unittest dirs
+    PYTHON_COVERAGERC = REPO_ROOT / ".coveragerc"
 
     # Bok_choy dirs
     BOK_CHOY_DIR = REPO_ROOT / "common" / "test" / "acceptance"

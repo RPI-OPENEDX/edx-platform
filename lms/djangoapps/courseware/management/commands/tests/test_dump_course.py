@@ -4,7 +4,7 @@
 
 import json
 from nose.plugins.attrib import attr
-from path import path
+from path import Path as path
 import shutil
 from StringIO import StringIO
 import tarfile
@@ -175,14 +175,12 @@ class CommandsTestBase(ModuleStoreTestCase):
 
     def test_export_course(self):
         tmp_dir = path(mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp_dir)
         filename = tmp_dir / 'test.tar.gz'
-        try:
-            self.run_export_course(filename)
-            with tarfile.open(filename) as tar_file:
-                self.check_export_file(tar_file)
 
-        finally:
-            shutil.rmtree(tmp_dir)
+        self.run_export_course(filename)
+        with tarfile.open(filename) as tar_file:
+            self.check_export_file(tar_file)
 
     def test_export_course_stdout(self):
         output = self.run_export_course('-')

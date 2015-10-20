@@ -10,7 +10,7 @@ from edxnotes.helpers import is_feature_enabled as is_edxnotes_enabled
  <% return _("{course_number} Courseware").format(course_number=course.display_number_with_default) %>
 </%def>
 
-<%block name="bodyclass">view-incourse view-courseware courseware ${course.css_class or ''}</%block>
+<%block name="bodyclass">view-in-course view-courseware courseware ${course.css_class or ''}</%block>
 <%block name="title"><title>
     % if section_title:
 ${page_title_breadcrumbs(section_title, course_name())}
@@ -130,12 +130,10 @@ ${fragment.foot_html()}
 
 </%block>
 
-<div class="container">
-  <div class="course-wrapper">
-    <section class="course-content" id="course-content">
-      ${fragment.body_html()}
-    </section>
-  </div>
+<div class="course-wrapper">
+  <section class="course-content" id="course-content">
+    ${fragment.body_html()}
+  </section>
 </div>
 
 <nav class="nav-utilities ${"has-utility-calculator" if course.show_calculator else ""}" aria-label="${_('Course Utilities')}">

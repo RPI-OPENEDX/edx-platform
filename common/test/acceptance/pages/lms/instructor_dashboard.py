@@ -57,6 +57,24 @@ class InstructorDashboardPage(CoursePage):
         student_admin_section.wait_for_page()
         return student_admin_section
 
+    def select_certificates(self):
+        """
+        Selects the certificates tab and returns the CertificatesSection
+        """
+        self.q(css='a[data-section=certificates]').first.click()
+        certificates_section = CertificatesPage(self.browser)
+        certificates_section.wait_for_page()
+        return certificates_section
+
+    def select_proctoring(self):
+        """
+        Selects the proctoring tab and returns the ProctoringSection
+        """
+        self.q(css='a[data-section=proctoring]').first.click()
+        proctoring_section = ProctoringPage(self.browser)
+        proctoring_section.wait_for_page()
+        return proctoring_section
+
     @staticmethod
     def get_asset_path(file_name):
         """
@@ -94,6 +112,40 @@ class MembershipPage(PageObject):
         Returns the MembershipPageAutoEnrollSection page object.
         """
         return MembershipPageAutoEnrollSection(self.browser)
+
+
+class ProctoringPage(PageObject):
+    """
+    Proctoring section of the Instructor dashboard.
+    """
+    url = None
+
+    def is_browser_on_page(self):
+        return self.q(css='a[data-section=proctoring].active-section').present
+
+    def select_allowance_section(self):
+        """
+        Expand the allowance section
+        """
+        allowance_section = ProctoringPageAllowanceSection(self.browser)
+        if not self.q(css="div.wrap #ui-accordion-proctoring-accordion-header-0[aria-selected=true]").present:
+            self.q(css="div.wrap #ui-accordion-proctoring-accordion-header-0").click()
+            self.wait_for_element_presence("div.wrap #ui-accordion-proctoring-accordion-header-0[aria-selected=true]",
+                                           "Allowance Section")
+        allowance_section.wait_for_page()
+        return allowance_section
+
+    def select_exam_attempts_section(self):
+        """
+        Expand the Student Attempts Section
+        """
+        exam_attempts_section = ProctoringPageAttemptsSection(self.browser)
+        if not self.q(css="div.wrap #ui-accordion-proctoring-accordion-header-1[aria-selected=true]").present:
+            self.q(css="div.wrap #ui-accordion-proctoring-accordion-header-1").click()
+            self.wait_for_element_presence("div.wrap #ui-accordion-proctoring-accordion-header-1[aria-selected=true]",
+                                           "Attempts Section")
+        exam_attempts_section.wait_for_page()
+        return exam_attempts_section
 
 
 class CohortManagementSection(PageObject):
@@ -496,6 +548,7 @@ class CohortManagementSection(PageObject):
         """
         if state != self.is_cohorted:
             self.q(css=self._bounded_selector('.cohorts-state')).first.click()
+            self.wait_for_ajax()
 
     def toggles_showing_of_discussion_topics(self):
         """
@@ -698,6 +751,55 @@ class MembershipPageAutoEnrollSection(PageObject):
         self.click_upload_file_button()
 
 
+class ProctoringPageAllowanceSection(PageObject):
+    """
+    Allowance section of the Instructor dashboard's Proctoring tab.
+    """
+    url = None
+
+    def is_browser_on_page(self):
+        return self.q(css="div.wrap #ui-accordion-proctoring-accordion-header-0[aria-selected=true]").present
+
+    @property
+    def is_add_allowance_button_visible(self):
+        """
+        Returns True if the Add Allowance button is present.
+        """
+        return self.q(css="a#add-allowance").present
+
+
+class ProctoringPageAttemptsSection(PageObject):
+    """
+    Exam Attempts section of the Instructor dashboard's Proctoring tab.
+    """
+    url = None
+
+    def is_browser_on_page(self):
+        return self.q(css="div.wrap #ui-accordion-proctoring-accordion-header-1[aria-selected=true]").present
+
+    @property
+    def is_search_text_field_visible(self):
+        """
+        Returns True if the search field is present
+        """
+        return self.q(css="#search_attempt_id").present
+
+    @property
+    def is_student_attempt_visible(self):
+        """
+        Returns True if a row with the Student's attempt is present
+        """
+        return self.q(css="a.remove-attempt").present
+
+    def remove_student_attempt(self):
+        """
+        Clicks the "x" to remove the Student's attempt.
+        """
+        with self.handle_alert(confirm=True):
+            self.q(css="a.remove-attempt").first.click()
+        self.wait_for_element_absence("a.remove-attempt", "exam attempt")
+
+
 class DataDownloadPage(PageObject):
     """
     Data Download section of the Instructor dashboard.
@@ -884,3 +986,41 @@ class StudentAdminPage(PageObject):
         """
         input_box = self.student_email_input.first.results[0]
         input_box.send_keys(email_addres)
+
+
+class CertificatesPage(PageObject):
+    """
+    Certificates section of the Instructor dashboard.
+    """
+    url = None
+    PAGE_SELECTOR = 'section#certificates'
+
+    def is_browser_on_page(self):
+        return self.q(css='a[data-section=certificates].active-section').present
+
+    def get_selector(self, css_selector):
+        """
+        Makes query selector by pre-pending certificates section
+        """
+        return self.q(css=' '.join([self.PAGE_SELECTOR, css_selector]))
+
+    @property
+    def generate_certificates_button(self):
+        """
+        Returns the "Generate Certificates" button.
+        """
+        return self.get_selector('#btn-start-generating-certificates')
+
+    @property
+    def certificate_generation_status(self):
+        """
+        Returns certificate generation status message container.
+        """
+        return self.get_selector('div.certificate-generation-status')
+
+    @property
+    def pending_tasks_section(self):
+        """
+        Returns the "Pending Instructor Tasks" section.
+        """
+        return self.get_selector('div.running-tasks-container')

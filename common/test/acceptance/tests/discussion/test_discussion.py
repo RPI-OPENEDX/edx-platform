@@ -236,6 +236,26 @@ class DiscussionTabSingleThreadTest(BaseDiscussionTestCase, DiscussionResponsePa
         self.assertTrue(self.thread_page.is_mathjax_preview_available())
         self.assertTrue(self.thread_page.is_mathjax_rendered())
 
+    def test_markdown_reference_link(self):
+        """
+        Check markdown editor renders reference link correctly
+        and colon(:) in reference link is not converted to %3a
+        """
+        sample_link = "http://example.com/colon:test"
+        thread_content = """[enter link description here][1]\n[1]: http://example.com/colon:test"""
+        thread_id = "test_thread_{}".format(uuid4().hex)
+        thread_fixture = SingleThreadViewFixture(
+            Thread(
+                id=thread_id,
+                body=thread_content,
+                commentable_id=self.discussion_id,
+                thread_type="discussion"
+            )
+        )
+        thread_fixture.push()
+        self.setup_thread_page(thread_id)
+        self.assertEqual(self.thread_page.get_link_href(), sample_link)
+
     def test_marked_answer_comments(self):
         thread_id = "test_thread_{}".format(uuid4().hex)
         response_id = "test_response_{}".format(uuid4().hex)
@@ -374,8 +394,11 @@ class DiscussionCommentDeletionTest(BaseDiscussionTestCase):
     def setup_view(self):
         view = SingleThreadViewFixture(Thread(id="comment_deletion_test_thread", commentable_id=self.discussion_id))
         view.addResponse(
-            Response(id="response1"),
-            [Comment(id="comment_other_author", user_id="other"), Comment(id="comment_self_author", user_id=self.user_id)])
+            Response(id="response1"), [
+                Comment(id="comment_other_author"),
+                Comment(id="comment_self_author", user_id=self.user_id, thread_id="comment_deletion_test_thread")
+            ]
+        )
         view.push()
 
     def test_comment_deletion_as_student(self):

@@ -71,13 +71,6 @@ describe 'Problem', ->
     it 'bind the math input', ->
       expect($('input.math')).toHandleWith 'keyup', @problem.refreshMath
 
-    # TODO: figure out why failing
-    xit 'replace math content on the page', ->
-      expect(MathJax.Hub.Queue.mostRecentCall.args).toEqual [
-        ['Text', @stubbedJax, ''],
-        [@problem.updateMathML, @stubbedJax, $('#input_example_1').get(0)]
-      ]
-
   describe 'bind_with_custom_input_id', ->
     beforeEach ->
       spyOn window, 'update_schematics'
@@ -204,15 +197,6 @@ describe 'Problem', ->
         @problem.check()
         expect(@problem.el.html()).toEqual 'Incorrect!'
         expect(window.SR.readElts).toHaveBeenCalled()
-
-    # TODO: figure out why failing
-    xdescribe 'when the response is undetermined', ->
-      it 'alert the response', ->
-        spyOn window, 'alert'
-        spyOn($, 'postWithPrefix').andCallFake (url, answers, callback) ->
-          callback(success: 'Number Only!')
-        @problem.check()
-        expect(window.alert).toHaveBeenCalledWith 'Number Only!'
 
   describe 'reset', ->
     beforeEach ->
@@ -554,13 +538,6 @@ describe 'Problem', ->
       runs ->
         expect(window.SR.readElts).toHaveBeenCalled()
 
-    # TODO: figure out why failing
-    xit 'alert to the user', ->
-      spyOn window, 'alert'
-      spyOn($, 'postWithPrefix').andCallFake (url, answers, callback) -> callback(success: 'OK')
-      @problem.save()
-      expect(window.alert).toHaveBeenCalledWith 'Saved'
-
   describe 'refreshMath', ->
     beforeEach ->
       @problem = new Problem($('.xblock-student_view'))
@@ -613,11 +590,6 @@ describe 'Problem', ->
       @problem.refreshAnswers()
       expect(@stubCodeMirror.save).toHaveBeenCalled()
 
-    # TODO: figure out why failing
-    xit 'serialize all answers', ->
-      @problem.refreshAnswers()
-      expect(@problem.answers).toEqual "input_1_1=one&input_1_2=two"
-
   describe 'multiple JsInput in single problem', ->
     jsinput_html = readFixtures('jsinput_problem.html')
 
@@ -628,3 +600,31 @@ describe 'Problem', ->
     it 'check_save_waitfor should return false', ->
       $(@problem.inputs[0]).data('waitfor', ->)
       expect(@problem.check_save_waitfor()).toEqual(false)
+
+  describe 'Submitting an xqueue-graded problem', ->
+    matlabinput_html = readFixtures('matlabinput_problem.html')
+
+    beforeEach ->
+      spyOn($, 'postWithPrefix').andCallFake (url, callback) ->
+        callback html: matlabinput_html
+      jasmine.Clock.useMock()
+      @problem = new Problem($('.xblock-student_view'))
+      spyOn(@problem, 'poll').andCallThrough()
+      @problem.render(matlabinput_html)
+
+    it 'check that we stop polling after a fixed amount of time', ->
+      expect(@problem.poll).not.toHaveBeenCalled()
+      jasmine.Clock.tick(1)
+      time_steps = [1000, 2000, 4000, 8000, 16000, 32000]
+      num_calls = 1
+      for time_step in time_steps
+        do (time_step) =>
+          jasmine.Clock.tick(time_step)
+          expect(@problem.poll.callCount).toEqual(num_calls)
+          num_calls += 1
+
+      # jump the next step and verify that we are not still continuing to poll
+      jasmine.Clock.tick(64000)
+      expect(@problem.poll.callCount).toEqual(6)
+
+      expect($('.capa_alert').text()).toEqual("The grading process is still running. Refresh the page to see updates.")

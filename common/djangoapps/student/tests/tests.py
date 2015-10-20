@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-This file demonstrates writing tests using the unittest module. These will pass
-when you run "manage.py test".
-
-Replace this with more appropriate tests for your application.
+Miscellaneous tests for the student app.
 """
 from datetime import datetime, timedelta
 import logging
@@ -13,23 +10,25 @@ import ddt
 
 from django.conf import settings
 from django.contrib.auth.models import User, AnonymousUser
-from django.contrib.sessions.middleware import SessionMiddleware
 from django.core.urlresolvers import reverse
 from django.test import TestCase
-from django.test.client import RequestFactory, Client
+from django.test.client import Client
 from mock import Mock, patch
 from opaque_keys.edx.locations import SlashSeparatedCourseKey
 
 from student.models import (
     anonymous_id_for_user, user_by_anonymous_id, CourseEnrollment, unique_id_for_user, LinkedInAddToProfileConfiguration
 )
-from student.views import (process_survey_link, _cert_info,
-                           change_enrollment, complete_course_mode_info)
+from student.views import (
+    process_survey_link,
+    _cert_info,
+    complete_course_mode_info,
+)
 from student.tests.factories import UserFactory, CourseModeFactory
 from util.testing import EventTestMixin
 from util.model_utils import USER_SETTINGS_CHANGED_EVENT_NAME
-from xmodule.modulestore.tests.factories import CourseFactory
-from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
+from xmodule.modulestore.tests.factories import CourseFactory, check_mongo_calls
+from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase, ModuleStoreEnum
 
 # These imports refer to lms djangoapps.
 # Their testcases are only run under lms.
@@ -193,6 +192,7 @@ class CourseEndingTest(TestCase):
         self.assertIsNone(_cert_info(user, course2, cert_status, course_mode))
 
 
+@ddt.ddt
 class DashboardTest(ModuleStoreTestCase):
     """
     Tests for dashboard utility functions
@@ -487,6 +487,82 @@ class DashboardTest(ModuleStoreTestCase):
         )
         self.assertContains(response, expected_url)
 
+    @unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Test only valid in lms')
+    @ddt.data(ModuleStoreEnum.Type.mongo, ModuleStoreEnum.Type.split)
+    def test_dashboard_metadata_caching(self, modulestore_type):
+        """
+        Check that the student dashboard makes use of course metadata caching.
+
+        After creating a course, that course's metadata should be cached as a
+        CourseOverview. The student dashboard should never have to make calls to
+        the modulestore.
+
+        Arguments:
+            modulestore_type (ModuleStoreEnum.Type): Type of modulestore to create
+                test course in.
+
+        Note to future developers:
+            If you break this test so that the "check_mongo_calls(0)" fails,
+            please do NOT change it to "check_mongo_calls(n>1)". Instead, change
+            your code to not load courses from the module store. This may
+            involve adding fields to CourseOverview so that loading a full
+            CourseDescriptor isn't necessary.
+        """
+        # Create a course and log in the user.
+        # Creating a new course will trigger a publish event and the course will be cached
+        test_course = CourseFactory.create(default_store=modulestore_type, emit_signals=True)
+        self.client.login(username="jack", password="test")
+
+        with check_mongo_calls(0):
+            CourseEnrollment.enroll(self.user, test_course.id)
+
+        # Subsequent requests will only result in SQL queries to load the
+        # CourseOverview object that has been created.
+        with check_mongo_calls(0):
+            response_1 = self.client.get(reverse('dashboard'))
+            self.assertEquals(response_1.status_code, 200)
+            response_2 = self.client.get(reverse('dashboard'))
+            self.assertEquals(response_2.status_code, 200)
+
+    @unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Test only valid in lms')
+    @patch.dict(settings.FEATURES, {"IS_EDX_DOMAIN": True})
+    def test_dashboard_header_nav_has_find_courses(self):
+        self.client.login(username="jack", password="test")
+        response = self.client.get(reverse("dashboard"))
+
+        # "Find courses" is shown in the side panel
+        self.assertContains(response, "Find courses")
+
+        # But other links are hidden in the navigation
+        self.assertNotContains(response, "How it Works")
+        self.assertNotContains(response, "Schools & Partners")
+
+    def test_course_mode_info_with_honor_enrollment(self):
+        """It will be true only if enrollment mode is honor and course has verified mode."""
+        course_mode_info = self._enrollment_with_complete_course('honor')
+        self.assertTrue(course_mode_info['show_upsell'])
+        self.assertEquals(course_mode_info['days_for_upsell'], 1)
+
+    @ddt.data('verified', 'credit')
+    def test_course_mode_info_with_different_enrollments(self, enrollment_mode):
+        """If user enrollment mode is either verified or credit then show_upsell
+        will be always false.
+        """
+        course_mode_info = self._enrollment_with_complete_course(enrollment_mode)
+        self.assertFalse(course_mode_info['show_upsell'])
+        self.assertIsNone(course_mode_info['days_for_upsell'])
+
+    def _enrollment_with_complete_course(self, enrollment_mode):
+        """"Dry method for course enrollment."""
+        CourseModeFactory.create(
+            course_id=self.course.id,
+            mode_slug='verified',
+            mode_display_name='Verified',
+            expiration_datetime=datetime.now(pytz.UTC) + timedelta(days=1)
+        )
+        enrollment = CourseEnrollment.enroll(self.user, self.course.id, mode=enrollment_mode)
+        return complete_course_mode_info(self.course.id, enrollment)
+
 
 class UserSettingsEventTestMixin(EventTestMixin):
     """
@@ -505,7 +581,7 @@ class UserSettingsEventTestMixin(EventTestMixin):
             kwargs['truncated'] = []
         self.assert_event_emitted(
             USER_SETTINGS_CHANGED_EVENT_NAME,
-            table=self.table,  # pylint: disable=no-member
+            table=self.table,
             user_id=self.user.id,
             **kwargs
         )

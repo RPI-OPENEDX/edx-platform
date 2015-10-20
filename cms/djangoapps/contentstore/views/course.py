@@ -27,6 +27,7 @@ from xmodule.tabs import CourseTab, CourseTabList, InvalidTabsException
 from openedx.core.lib.course_tabs import CourseTabPluginManager
 from openedx.core.djangoapps.credit.api import is_credit_course, get_credit_requirements
 from openedx.core.djangoapps.credit.tasks import update_credit_course_requirements
+from openedx.core.djangoapps.content.course_structures.api.v0 import api, errors
 from xmodule.modulestore import EdxJSONEncoder
 from xmodule.modulestore.exceptions import ItemNotFoundError, DuplicateCourseError
 from opaque_keys import InvalidKeyError
@@ -48,6 +49,7 @@ from contentstore.utils import (
     get_lms_link_for_item,
     reverse_course_url,
     reverse_library_url,
+    reverse_usage_url,
     reverse_url,
     remove_all_instructors,
 )
@@ -85,7 +87,8 @@ from student.auth import has_course_author_access
 
 from util.milestones_helpers import (
     set_prerequisite_courses,
-    is_valid_course_key
+    is_valid_course_key,
+    is_prerequisite_courses_enabled
 )
 
 log = logging.getLogger(__name__)
@@ -328,7 +331,8 @@ def _course_outline_json(request, course_module):
         course_module,
         include_child_info=True,
         course_outline=True,
-        include_children_predicate=lambda xblock: not xblock.category == 'vertical'
+        include_children_predicate=lambda xblock: not xblock.category == 'vertical',
+        user=request.user
     )
 
 
@@ -458,6 +462,7 @@ def course_listing(request):
         'in_process_course_actions': in_process_course_actions,
         'libraries_enabled': LIBRARIES_ENABLED,
         'libraries': [format_library_for_view(lib) for lib in libraries],
+        'show_new_library_button': LIBRARIES_ENABLED and request.user.is_active,
         'user': request.user,
         'request_course_creator_url': reverse('contentstore.views.request_course_creator'),
         'course_creator_status': _get_course_creator_status(request.user),
@@ -470,6 +475,44 @@ def course_listing(request):
 def _get_rerun_link_for_item(course_key):
     """ Returns the rerun link for the given course key. """
     return reverse_course_url('course_rerun_handler', course_key)
+
+
+def _deprecated_blocks_info(course_module, deprecated_block_types):
+    """
+    Returns deprecation information about `deprecated_block_types`
+
+    Arguments:
+        course_module (CourseDescriptor): course object
+        deprecated_block_types (list): list of deprecated blocks types
+
+    Returns:
+        Dict with following keys:
+        block_types (list): list containing types of all deprecated blocks
+        block_types_enabled (bool): True if any or all `deprecated_blocks` present in Advanced Module List else False
+        blocks (list): List of `deprecated_block_types` component names and their parent's url
+        advance_settings_url (str): URL to advance settings page
+    """
+    data = {
+        'block_types': deprecated_block_types,
+        'block_types_enabled': any(
+            block_type in course_module.advanced_modules for block_type in deprecated_block_types
+        ),
+        'blocks': [],
+        'advance_settings_url': reverse_course_url('advanced_settings_handler', course_module.id)
+    }
+
+    try:
+        structure_data = api.course_structure(course_module.id, block_types=deprecated_block_types)
+    except errors.CourseStructureNotAvailableError:
+        return data
+
+    blocks = []
+    for block in structure_data['blocks'].values():
+        blocks.append([reverse_usage_url('container_handler', block['parent']), block['display_name']])
+
+    data['blocks'].extend(blocks)
+
+    return data
 
 
 @login_required
@@ -499,6 +542,8 @@ def course_index(request, course_key):
         except (ItemNotFoundError, CourseActionStateItemNotFoundError):
             current_action = None
 
+        deprecated_blocks_info = _deprecated_blocks_info(course_module, settings.DEPRECATED_BLOCK_TYPES)
+
         return render_to_response('course_outline.html', {
             'context_course': course_module,
             'lms_link': lms_link,
@@ -512,6 +557,7 @@ def course_index(request, course_key):
             'course_release_date': course_release_date,
             'settings_url': settings_url,
             'reindex_link': reindex_link,
+            'deprecated_blocks_info': deprecated_blocks_info,
             'notification_dismiss_url': reverse_course_url(
                 'course_notifications_handler',
                 current_action.course_key,
@@ -617,7 +663,7 @@ def _create_or_rerun_course(request):
     Returns the destination course_key and overriding fields for the new course.
     Raises DuplicateCourseError and InvalidKeyError
     """
-    if not auth.has_access(request.user, CourseCreatorRole()):
+    if not auth.user_has_role(request.user, CourseCreatorRole()):
         raise PermissionDenied()
 
     try:
@@ -741,6 +787,9 @@ def _rerun_course(request, org, number, run, fields):
     # Mark the action as initiated
     CourseRerunState.objects.initiated(source_course_key, destination_course_key, request.user, fields['display_name'])
 
+    # Clear the fields that must be reset for the rerun
+    fields['advertised_start'] = None
+
     # Rerun the course as a new celery task
     json_fields = json.dumps(fields, cls=EdxJSONEncoder)
     rerun_course.delay(unicode(source_course_key), unicode(destination_course_key), request.user.id, json_fields)
@@ -846,7 +895,6 @@ def settings_handler(request, course_key_string):
         json: update the Course and About xblocks through the CourseDetails model
     """
     course_key = CourseKey.from_string(course_key_string)
-    prerequisite_course_enabled = settings.FEATURES.get('ENABLE_PREREQUISITE_COURSES', False)
     credit_eligibility_enabled = settings.FEATURES.get('ENABLE_CREDIT_ELIGIBILITY', False)
     with modulestore().bulk_operations(course_key):
         course_module = get_course_and_check_access(course_key, request.user)
@@ -855,12 +903,14 @@ def settings_handler(request, course_key_string):
 
             # see if the ORG of this course can be attributed to a 'Microsite'. In that case, the
             # course about page should be editable in Studio
-            about_page_editable = not microsite.get_value_for_org(
+            marketing_site_enabled = microsite.get_value_for_org(
                 course_module.location.org,
                 'ENABLE_MKTG_SITE',
                 settings.FEATURES.get('ENABLE_MKTG_SITE', False)
             )
 
+            about_page_editable = not marketing_site_enabled
+            enrollment_end_editable = GlobalStaff().has_user(request.user) or not marketing_site_enabled
             short_description_editable = settings.FEATURES.get('EDITABLE_SHORT_DESCRIPTION', True)
             settings_context = {
                 'context_course': course_module,
@@ -876,8 +926,10 @@ def settings_handler(request, course_key_string):
                 'credit_eligibility_enabled': credit_eligibility_enabled,
                 'is_credit_course': False,
                 'show_min_grade_warning': False,
+                'enrollment_end_editable': enrollment_end_editable,
+                'is_prerequisite_courses_enabled': is_prerequisite_courses_enabled()
             }
-            if prerequisite_course_enabled:
+            if is_prerequisite_courses_enabled():
                 courses, in_process_course_actions = get_courses_accessible_to_user(request)
                 # exclude current course from the list of available courses
                 courses = [course for course in courses if course.id != course_key]
@@ -918,7 +970,7 @@ def settings_handler(request, course_key_string):
             # For every other possible method type submitted by the caller...
             else:
                 # if pre-requisite course feature is enabled set pre-requisite course
-                if prerequisite_course_enabled:
+                if is_prerequisite_courses_enabled():
                     prerequisite_course_keys = request.json.get('pre_requisite_courses', [])
                     if prerequisite_course_keys:
                         if not all(is_valid_course_key(course_key) for course_key in prerequisite_course_keys):
@@ -1411,7 +1463,7 @@ def group_configurations_list_handler(request, course_key_string):
                 response["Location"] = reverse_course_url(
                     'group_configurations_detail_handler',
                     course.id,
-                    kwargs={'group_configuration_id': new_configuration.id}  # pylint: disable=no-member
+                    kwargs={'group_configuration_id': new_configuration.id}
                 )
                 store.update_item(course, request.user.id)
                 return response

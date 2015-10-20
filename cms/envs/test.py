@@ -20,7 +20,7 @@ sessions. Assumes structure:
 
 from .common import *
 import os
-from path import path
+from path import Path as path
 from warnings import filterwarnings, simplefilter
 from uuid import uuid4
 
@@ -47,13 +47,16 @@ THIS_UUID = uuid4().hex[:5]
 # Nose Test Runner
 TEST_RUNNER = 'django_nose.NoseTestSuiteRunner'
 
-_system = 'cms'
-_report_dir = REPO_ROOT / 'reports' / _system
-_report_dir.makedirs_p()
+_SYSTEM = 'cms'
+
+_REPORT_DIR = REPO_ROOT / 'reports' / _SYSTEM
+_REPORT_DIR.makedirs_p()
+_NOSEID_DIR = REPO_ROOT / '.testids' / _SYSTEM
+_NOSEID_DIR.makedirs_p()
 
 NOSE_ARGS = [
-    '--id-file', REPO_ROOT / '.testids' / _system / 'noseids',
-    '--xunit-file', _report_dir / 'nosetests.xml',
+    '--id-file', _NOSEID_DIR / 'noseids',
+    '--xunit-file', _REPORT_DIR / 'nosetests.xml',
 ]
 
 TEST_ROOT = path('test_root')
@@ -62,6 +65,7 @@ TEST_ROOT = path('test_root')
 STATIC_ROOT = TEST_ROOT / "staticfiles"
 
 GITHUB_REPO_ROOT = TEST_ROOT / "data"
+DATA_DIR = TEST_ROOT / "data"
 COMMON_TEST_DATA_ROOT = COMMON_ROOT / "test" / "data"
 
 # For testing "push to lms"
@@ -88,10 +92,6 @@ STATICFILES_DIRS += [
 # http://stackoverflow.com/questions/12816941/unit-testing-with-django-pipeline
 STATICFILES_STORAGE = 'pipeline.storage.NonPackagingPipelineStorage'
 STATIC_URL = "/static/"
-PIPELINE_ENABLED = False
-
-TENDER_DOMAIN = "help.edge.edx.org"
-TENDER_SUBDOMAIN = "edxedge"
 
 # Update module store settings per defaults for tests
 update_module_store_settings(
@@ -166,7 +166,9 @@ CACHES = {
         'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
         'LOCATION': 'edx_location_mem_cache',
     },
-
+    'course_structure_cache': {
+        'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
+    },
 }
 
 # Add external_auth to Installed apps for testing
@@ -207,8 +209,8 @@ PASSWORD_HASHERS = (
     'django.contrib.auth.hashers.MD5PasswordHasher',
 )
 
-# dummy segment-io key
-SEGMENT_IO_KEY = '***REMOVED***'
+# No segment key
+CMS_SEGMENT_KEY = None
 
 FEATURES['ENABLE_SERVICE_STATUS'] = True
 

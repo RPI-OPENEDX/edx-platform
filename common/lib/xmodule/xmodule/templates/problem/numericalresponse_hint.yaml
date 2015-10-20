@@ -1,7 +1,6 @@
 ---
 metadata:
     display_name: Numerical Input with Hints and Feedback
-    tab: hint
     markdown: |
         
         You can provide feedback for correct answers in numerical input problems. You cannot provide feedback for incorrect answers.
@@ -25,6 +24,7 @@ metadata:
         The mean is calculated by summing the set of numbers and dividing by n. In this case: (1 + 5 + 6 + 3 + 5) / 5 = 20 / 5 = 4.
         [explanation]
 
+hinted: true
 data: |
     <problem>
     

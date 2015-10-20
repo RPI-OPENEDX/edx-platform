@@ -30,7 +30,6 @@ FEATURES['SUBDOMAIN_BRANDING'] = True
 FEATURES['FORCE_UNIVERSITY_DOMAIN'] = None		# show all university courses if in dev (ie don't use HTTP_HOST)
 FEATURES['ENABLE_MANUAL_GIT_RELOAD'] = True
 FEATURES['ENABLE_PSYCHOMETRICS'] = False    # real-time psychometrics (eg item response theory analysis in instructor dashboard)
-FEATURES['ENABLE_INSTRUCTOR_ANALYTICS'] = True
 FEATURES['ENABLE_SERVICE_STATUS'] = True
 FEATURES['ENABLE_INSTRUCTOR_EMAIL'] = True     # Enable email for all Studio courses
 FEATURES['REQUIRE_COURSE_EMAIL_AUTH'] = False  # Give all courses email (don't require django-admin perms)
@@ -93,6 +92,10 @@ CACHES = {
     'loc_cache': {
         'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
         'LOCATION': 'edx_location_mem_cache',
+    },
+    'course_structure_cache': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'edx_course_structure_mem_cache',
     },
 }
 
@@ -269,12 +272,10 @@ PIPELINE_SASS_ARGUMENTS = '--debug-info --require {proj_dir}/static/sass/bourbon
 ANALYTICS_SERVER_URL = "http://127.0.0.1:9000/"
 ANALYTICS_API_KEY = ""
 
-##### Segment.io  ######
+##### Segment  ######
 
-# If there's an environment variable set, grab it and turn on Segment.io
-SEGMENT_IO_LMS_KEY = os.environ.get('SEGMENT_IO_LMS_KEY')
-if SEGMENT_IO_LMS_KEY:
-    FEATURES['SEGMENT_IO_LMS'] = True
+# If there's an environment variable set, grab it
+LMS_SEGMENT_KEY = os.environ.get('SEGMENT_KEY')
 
 ###################### Payment ######################
 

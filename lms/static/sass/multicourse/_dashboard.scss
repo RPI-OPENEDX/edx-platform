@@ -13,16 +13,33 @@
 // ====================
 .dashboard {
   @include clearfix();
-  padding: ($baseline*2) 0 0 0;
+  padding: ($baseline*2) 0 $baseline 0;
+
+  .wrapper-find-courses {
+    @include float(right);
+    @include margin-left(flex-gutter());
+    width: flex-grid(3);
+    margin-top: ($baseline*2);
+    border-top: 3px solid $blue;
+    padding: $baseline 0;
+
+    .copy {
+      @extend %t-copy-sub1;
+    }
+
+    .btn-find-courses {
+      @extend %btn-pl-elevated-alt;
+    }
+  }
 
   .profile-sidebar {
     background: transparent;
     @include float(right);
-    margin-top: ($baseline*2);
+    @include margin-left(flex-gutter());
     width: flex-grid(3);
-    box-shadow: 0 0 1px $shadow-l1;
-    border: 1px solid $border-color-2;
-    border-radius: 3px;
+    margin-top: ($baseline*2);
+    border-top: 3px solid $blue;
+    padding: $baseline 0;
 
     .user-info {
       @include clearfix();
@@ -31,7 +48,7 @@
         @include box-sizing(border-box);
         @include clearfix();
         margin: 0;
-        padding: $baseline;
+        padding: 0;
         width: flex-grid(12);
 
         li {
@@ -59,7 +76,7 @@
           }
 
           span.title {
-            @extend %t-copy-sub1;
+            @extend %t-title6;
             @extend %t-strong;
 
             a {
@@ -348,7 +365,7 @@
 
         .info-date-block {
           @extend %t-title7;
-          color: $gray-l1;
+          color: $gray; // WCAG 2.0 AA compliant
           display: block;
         }
       }
@@ -531,10 +548,6 @@
         padding: 0;
       }
 
-      .purchase_credit {
-        float: right;
-      }
-
       .message {
         @extend %ui-depth1;
         border-radius: 3px;
@@ -543,6 +556,7 @@
         padding: ($baseline/2) $baseline;
         background: $gray-l5;
         border: 1px solid $gray-l4;
+        color: $base-font-color; // Overrides the normal white color in this one case
 
         // STATE: shown
         &.is-shown {
@@ -716,6 +730,22 @@
             .grade-value {
               font-size: 1.2rem;
               font-weight: bold;
+            }
+          }
+
+          .credit-action {
+            .credit-msg {
+              @include float(left);
+              width: flex-grid(9, 12);
+            }
+
+            .credit-btn {
+              @extend %btn-pl-yellow-base;
+              @include float(right);
+              background-image: none ;
+              text-shadow: none;
+              box-shadow: none;
+              text-transform: none;
             }
           }
 

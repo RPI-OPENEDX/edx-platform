@@ -1,14 +1,20 @@
-define([
-    'jquery',
-    'common/js/spec_helpers/template_helpers',
-    'common/js/spec_helpers/ajax_helpers',
-    'js/student_account/views/AccessView',
-    'js/student_account/views/FormView',
-    'js/student_account/enrollment',
-    'js/student_account/shoppingcart',
-    'js/student_account/emailoptin'
-], function($, TemplateHelpers, AjaxHelpers, AccessView, FormView, EnrollmentInterface, ShoppingCartInterface) {
-        "use strict";
+;(function (define) {
+    'use strict';
+    define([
+            'jquery',
+            'underscore',
+            'backbone',
+            'common/js/spec_helpers/template_helpers',
+            'common/js/spec_helpers/ajax_helpers',
+            'js/student_account/views/AccessView',
+            'js/student_account/views/FormView',
+            'js/student_account/enrollment',
+            'js/student_account/shoppingcart',
+            'js/student_account/emailoptin'
+        ],
+        function($, _, Backbone, TemplateHelpers, AjaxHelpers, AccessView, FormView, EnrollmentInterface,
+                 ShoppingCartInterface) {
+
         describe('edx.student.account.AccessView', function() {
             var requests = null,
                 view = null,
@@ -24,7 +30,7 @@ define([
                             required: true,
                             placeholder: 'xsy@edx.org',
                             instructions: 'Enter your email here.',
-                            restrictions: {},
+                            restrictions: {}
                         },
                         {
                             name: 'username',
@@ -49,23 +55,27 @@ define([
                 THIRD_PARTY_COMPLETE_URL = '/auth/complete/provider/';
 
             var ajaxSpyAndInitialize = function(that, mode, nextUrl, finishAuthUrl) {
+                var options = {
+                        initial_mode: mode,
+                        third_party_auth: {
+                            currentProvider: null,
+                            providers: [],
+                            secondaryProviders: [{name: "provider"}],
+                            finishAuthUrl: finishAuthUrl
+                        },
+                        login_redirect_url: nextUrl, // undefined for default
+                        platform_name: 'edX',
+                        login_form_desc: FORM_DESCRIPTION,
+                        registration_form_desc: FORM_DESCRIPTION,
+                        password_reset_form_desc: FORM_DESCRIPTION
+                    },
+                    $logistrationElement = $('#login-and-registration-container');
+
                 // Spy on AJAX requests
                 requests = AjaxHelpers.requests(that);
 
                 // Initialize the access view
-                view = new AccessView({
-                    mode: mode,
-                    thirdPartyAuth: {
-                        currentProvider: null,
-                        providers: [],
-                        finishAuthUrl: finishAuthUrl
-                    },
-                    nextUrl: nextUrl, // undefined for default
-                    platformName: 'edX',
-                    loginFormDesc: FORM_DESCRIPTION,
-                    registrationFormDesc: FORM_DESCRIPTION,
-                    passwordResetFormDesc: FORM_DESCRIPTION
-                });
+                view = new AccessView(_.extend(options, {el: $logistrationElement}));
 
                 // Mock the redirect call
                 spyOn( view, 'redirect' ).andCallFake( function() {} );
@@ -91,15 +101,21 @@ define([
             };
 
             beforeEach(function() {
-                setFixtures('<div id="login-and-registration-container"></div>');
+                setFixtures('<div id="login-and-registration-container" class="login-register" />');
                 TemplateHelpers.installTemplate('templates/student_account/access');
                 TemplateHelpers.installTemplate('templates/student_account/login');
                 TemplateHelpers.installTemplate('templates/student_account/register');
                 TemplateHelpers.installTemplate('templates/student_account/password_reset');
                 TemplateHelpers.installTemplate('templates/student_account/form_field');
+                TemplateHelpers.installTemplate('templates/student_account/institution_login');
+                TemplateHelpers.installTemplate('templates/student_account/institution_register');
 
                 // Stub analytics tracking
                 window.analytics = jasmine.createSpyObj('analytics', ['track', 'page', 'pageview', 'trackLink']);
+            });
+
+            afterEach(function() {
+                Backbone.history.stop();
             });
 
             it('can initially display the login form', function() {
@@ -133,6 +149,30 @@ define([
                 // Simulate selection of the login form
                 selectForm('login');
                 assertForms('#login-form', '#register-form');
+            });
+
+            it('toggles between the login and institution login view', function() {
+                ajaxSpyAndInitialize(this, 'login');
+
+                // Simulate clicking on institution login button
+                $('#login-form .button-secondary-login[data-type="institution_login"]').click();
+                assertForms('#institution_login-form', '#login-form');
+
+                // Simulate selection of the login form
+                selectForm('login');
+                assertForms('#login-form', '#institution_login-form');
+            });
+
+            it('toggles between the register and institution register view', function() {
+                ajaxSpyAndInitialize(this, 'register');
+
+                // Simulate clicking on institution login button
+                $('#register-form .button-secondary-login[data-type="institution_login"]').click();
+                assertForms('#institution_login-form', '#register-form');
+
+                // Simulate selection of the login form
+                selectForm('register');
+                assertForms('#register-form', '#institution_login-form');
             });
 
             it('displays the reset password form', function() {
@@ -190,5 +230,5 @@ define([
             });
 
         });
-    }
-);
+    });
+}).call(this, define || RequireJS.define);

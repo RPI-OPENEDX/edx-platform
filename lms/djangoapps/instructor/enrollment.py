@@ -5,6 +5,7 @@ Does not include any access control, be sure to check access before calling.
 """
 
 import json
+import logging
 from django.contrib.auth.models import User
 from django.conf import settings
 from django.core.urlresolvers import reverse
@@ -21,6 +22,11 @@ from student.models import anonymous_id_for_user
 from openedx.core.djangoapps.user_api.models import UserPreference
 
 from microsite_configuration import microsite
+from xmodule.modulestore.django import modulestore
+from xmodule.modulestore.exceptions import ItemNotFoundError
+
+
+log = logging.getLogger(__name__)
 
 
 class EmailEnrollmentState(object):
@@ -203,6 +209,19 @@ def reset_student_attempts(course_id, student, module_state_key, delete_module=F
         submissions.SubmissionError: unexpected error occurred while resetting the score in the submissions API.
 
     """
+    try:
+        # A block may have children. Clear state on children first.
+        block = modulestore().get_item(module_state_key)
+        if block.has_children:
+            for child in block.children:
+                try:
+                    reset_student_attempts(course_id, student, child, delete_module=delete_module)
+                except StudentModule.DoesNotExist:
+                    # If a particular child doesn't have any state, no big deal, as long as the parent does.
+                    pass
+    except ItemNotFoundError:
+        log.warning("Could not find %s in modulestore when attempting to reset attempts.", module_state_key)
+
     # Reset the student's score in the submissions API
     # Currently this is used only by open assessment (ORA 2)
     # We need to do this *before* retrieving the `StudentModule` model,
@@ -242,7 +261,7 @@ def _reset_module_attempts(studentmodule):
     studentmodule.save()
 
 
-def get_email_params(course, auto_enroll, secure=True):
+def get_email_params(course, auto_enroll, secure=True, course_key=None, display_name=None):
     """
     Generate parameters used when parsing email templates.
 
@@ -251,6 +270,8 @@ def get_email_params(course, auto_enroll, secure=True):
     """
 
     protocol = 'https' if secure else 'http'
+    course_key = course_key or course.id.to_deprecated_string()
+    display_name = display_name or course.display_name_with_default
 
     stripped_site_name = microsite.get_value(
         'SITE_NAME',
@@ -266,7 +287,7 @@ def get_email_params(course, auto_enroll, secure=True):
     course_url = u'{proto}://{site}{path}'.format(
         proto=protocol,
         site=stripped_site_name,
-        path=reverse('course_root', kwargs={'course_id': course.id.to_deprecated_string()})
+        path=reverse('course_root', kwargs={'course_id': course_key})
     )
 
     # We can't get the url to the course's About page if the marketing site is enabled.
@@ -275,7 +296,7 @@ def get_email_params(course, auto_enroll, secure=True):
         course_about_url = u'{proto}://{site}{path}'.format(
             proto=protocol,
             site=stripped_site_name,
-            path=reverse('about_course', kwargs={'course_id': course.id.to_deprecated_string()})
+            path=reverse('about_course', kwargs={'course_id': course_key})
         )
 
     is_shib_course = uses_shib(course)
@@ -285,6 +306,7 @@ def get_email_params(course, auto_enroll, secure=True):
         'site_name': stripped_site_name,
         'registration_url': registration_url,
         'course': course,
+        'display_name': display_name,
         'auto_enroll': auto_enroll,
         'course_url': course_url,
         'course_about_url': course_about_url,
@@ -302,6 +324,7 @@ def send_mail_to_student(student, param_dict, language=None):
     [
         `site_name`: name given to edX instance (a `str`)
         `registration_url`: url for registration (a `str`)
+        `display_name` : display name of a course (a `str`)
         `course_id`: id of course (a `str`)
         `auto_enroll`: user input option (a `str`)
         `course_url`: url of course (a `str`)
@@ -319,8 +342,8 @@ def send_mail_to_student(student, param_dict, language=None):
     """
 
     # add some helpers and microconfig subsitutions
-    if 'course' in param_dict:
-        param_dict['course_name'] = param_dict['course'].display_name_with_default
+    if 'display_name' in param_dict:
+        param_dict['course_name'] = param_dict['display_name']
 
     param_dict['site_name'] = microsite.get_value(
         'SITE_NAME',

@@ -2,7 +2,9 @@
 Segregation of pymongo functions from the data modeling mechanisms for split modulestore.
 """
 import datetime
+import cPickle as pickle
 import math
+import zlib
 import pymongo
 import pytz
 import re
@@ -12,12 +14,19 @@ from time import time
 # Import this just to export it
 from pymongo.errors import DuplicateKeyError  # pylint: disable=unused-import
 
+try:
+    from django.core.cache import get_cache, InvalidCacheBackendError
+    DJANGO_AVAILABLE = True
+except ImportError:
+    DJANGO_AVAILABLE = False
+
+import dogstats_wrapper as dog_stats_api
+
 from contracts import check, new_contract
 from mongodb_proxy import autoretry_read, MongoProxy
 from xmodule.exceptions import HeartbeatFailure
 from xmodule.modulestore import BlockData
 from xmodule.modulestore.split_mongo import BlockKey
-import dogstats_wrapper as dog_stats_api
 
 
 new_contract('BlockData', BlockData)
@@ -38,9 +47,10 @@ class Tagger(object):
     An object used by :class:`QueryTimer` to allow timed code blocks
     to add measurements and tags to the timer.
     """
-    def __init__(self):
+    def __init__(self, default_sample_rate):
         self.added_tags = []
         self.measures = []
+        self.sample_rate = default_sample_rate
 
     def measure(self, name, size):
         """
@@ -105,7 +115,7 @@ class QueryTimer(object):
             metric_name: The name used to aggregate all of these metrics.
             course_context: The course which the query is being made for.
         """
-        tagger = Tagger()
+        tagger = Tagger(self._sample_rate)
         metric_name = "{}.{}".format(self._metric_base, metric_name)
 
         start = time()
@@ -121,24 +131,24 @@ class QueryTimer(object):
                     size,
                     timestamp=end,
                     tags=[tag for tag in tags if not tag.startswith('{}:'.format(metric_name))],
-                    sample_rate=self._sample_rate,
+                    sample_rate=tagger.sample_rate,
                 )
             dog_stats_api.histogram(
                 '{}.duration'.format(metric_name),
                 end - start,
                 timestamp=end,
                 tags=tags,
-                sample_rate=self._sample_rate,
+                sample_rate=tagger.sample_rate,
             )
             dog_stats_api.increment(
                 metric_name,
                 timestamp=end,
                 tags=tags,
-                sample_rate=self._sample_rate,
+                sample_rate=tagger.sample_rate,
             )
 
 
-TIMER = QueryTimer(__name__, 0.001)
+TIMER = QueryTimer(__name__, 0.01)
 
 
 def structure_from_mongo(structure, course_context=None):
@@ -203,6 +213,60 @@ def structure_to_mongo(structure, course_context=None):
         return new_structure
 
 
+class CourseStructureCache(object):
+    """
+    Wrapper around django cache object to cache course structure objects.
+    The course structures are pickled and compressed when cached.
+
+    If the 'course_structure_cache' doesn't exist, then don't do anything for
+    for set and get.
+    """
+    def __init__(self):
+        self.cache = None
+        if DJANGO_AVAILABLE:
+            try:
+                self.cache = get_cache('course_structure_cache')
+            except InvalidCacheBackendError:
+                pass
+
+    def get(self, key, course_context=None):
+        """Pull the compressed, pickled struct data from cache and deserialize."""
+        if self.cache is None:
+            return None
+
+        with TIMER.timer("CourseStructureCache.get", course_context) as tagger:
+            compressed_pickled_data = self.cache.get(key)
+            tagger.tag(from_cache=str(compressed_pickled_data is not None).lower())
+
+            if compressed_pickled_data is None:
+                # Always log cache misses, because they are unexpected
+                tagger.sample_rate = 1
+                return None
+
+            tagger.measure('compressed_size', len(compressed_pickled_data))
+
+            pickled_data = zlib.decompress(compressed_pickled_data)
+            tagger.measure('uncompressed_size', len(pickled_data))
+
+            return pickle.loads(pickled_data)
+
+    def set(self, key, structure, course_context=None):
+        """Given a structure, will pickle, compress, and write to cache."""
+        if self.cache is None:
+            return None
+
+        with TIMER.timer("CourseStructureCache.set", course_context) as tagger:
+            pickled_data = pickle.dumps(structure, pickle.HIGHEST_PROTOCOL)
+            tagger.measure('uncompressed_size', len(pickled_data))
+
+            # 1 = Fastest (slightly larger results)
+            compressed_pickled_data = zlib.compress(pickled_data, 1)
+            tagger.measure('compressed_size', len(compressed_pickled_data))
+
+            # Stuctures are immutable, so we set a timeout of "never"
+            self.cache.set(key, compressed_pickled_data, None)
+
+
 class MongoConnection(object):
     """
     Segregation of pymongo functions from the data modeling mechanisms for split modulestore.
@@ -252,19 +316,32 @@ class MongoConnection(object):
         if self.database.connection.alive():
             return True
         else:
-            raise HeartbeatFailure("Can't connect to {}".format(self.database.name))
+            raise HeartbeatFailure("Can't connect to {}".format(self.database.name), 'mongo')
 
     def get_structure(self, key, course_context=None):
         """
-        Get the structure from the persistence mechanism whose id is the given key
+        Get the structure from the persistence mechanism whose id is the given key.
+
+        This method will use a cached version of the structure if it is availble.
         """
         with TIMER.timer("get_structure", course_context) as tagger_get_structure:
-            with TIMER.timer("get_structure.find_one", course_context) as tagger_find_one:
-                doc = self.structures.find_one({'_id': key})
-                tagger_find_one.measure("blocks", len(doc['blocks']))
-            tagger_get_structure.measure("blocks", len(doc['blocks']))
+            cache = CourseStructureCache()
 
-            return structure_from_mongo(doc, course_context)
+            structure = cache.get(key, course_context)
+            tagger_get_structure.tag(from_cache=str(bool(structure)).lower())
+            if not structure:
+                # Always log cache misses, because they are unexpected
+                tagger_get_structure.sample_rate = 1
+
+                with TIMER.timer("get_structure.find_one", course_context) as tagger_find_one:
+                    doc = self.structures.find_one({'_id': key})
+                    tagger_find_one.measure("blocks", len(doc['blocks']))
+                    structure = structure_from_mongo(doc, course_context)
+                    tagger_find_one.sample_rate = 1
+
+                cache.set(key, structure, course_context)
+
+            return structure
 
     @autoretry_read()
     def find_structures_by_id(self, ids, course_context=None):
@@ -462,5 +539,6 @@ class MongoConnection(object):
                 ('course', pymongo.ASCENDING),
                 ('run', pymongo.ASCENDING)
             ],
-            unique=True
+            unique=True,
+            background=True
         )

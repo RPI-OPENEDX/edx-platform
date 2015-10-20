@@ -1,6 +1,6 @@
-define(["jquery", "underscore", "gettext", "js/views/baseview", "js/models/asset", "common/js/components/views/paging",
-        "js/views/asset", "common/js/components/views/paging_header", "common/js/components/views/paging_footer",
-        "js/utils/modal", "js/views/utils/view_utils", "js/views/feedback_notification",
+define(["jquery", "underscore", "gettext", "js/views/baseview", "js/models/asset", "js/views/paging",
+        "js/views/asset", "js/views/paging_header", "common/js/components/views/paging_footer",
+        "js/utils/modal", "common/js/components/utils/view_utils", "common/js/components/views/feedback_notification",
         "text!templates/asset-library.underscore",
         "jquery.fileupload-process", "jquery.fileupload-validate"],
     function($, _, gettext, BaseView, AssetModel, PagingView, AssetView, PagingHeader, PagingFooter,
@@ -71,7 +71,7 @@ define(["jquery", "underscore", "gettext", "js/views/baseview", "js/models/asset
                         tableBody = this.$('#asset-table-body');
                         this.tableBody = tableBody;
                         this.pagingHeader = new PagingHeader({view: this, el: $('#asset-paging-header')});
-                        this.pagingFooter = new PagingFooter({view: this, el: $('#asset-paging-footer')});
+                        this.pagingFooter = new PagingFooter({collection: this.collection, el: $('#asset-paging-footer')});
                         this.pagingHeader.render();
                         this.pagingFooter.render();
 

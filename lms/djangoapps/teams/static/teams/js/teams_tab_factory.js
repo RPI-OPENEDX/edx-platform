@@ -1,13 +1,13 @@
 ;(function (define) {
     'use strict';
-
-    define(['jquery','teams/js/views/teams_tab'],
+    define(['jquery', 'teams/js/views/teams_tab'],
         function ($, TeamsTabView) {
-            return function () {
-                var view = new TeamsTabView({
-                    el: $('.teams-content')
+            return function (options) {
+                var teamsTab = new TeamsTabView({
+                    el: $('.teams-content'),
+                    context: options
                 });
-                view.render();
+                teamsTab.start();
             };
         });
 }).call(this, define || RequireJS.define);

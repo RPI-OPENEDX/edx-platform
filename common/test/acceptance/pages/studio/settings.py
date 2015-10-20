@@ -4,11 +4,13 @@ Course Schedule and Details Settings page.
 """
 from __future__ import unicode_literals
 from bok_choy.promise import EmptyPromise
+from bok_choy.javascript import requirejs
 
 from .course_page import CoursePage
 from .utils import press_the_notification_button
 
 
+@requirejs('js/factories/settings')
 class SettingsPage(CoursePage):
     """
     Course Schedule and Details Settings page.
@@ -21,6 +23,13 @@ class SettingsPage(CoursePage):
     ################
     def is_browser_on_page(self):
         return self.q(css='body.view-settings').present
+
+    def wait_for_require_js(self):
+        """
+        Wait for require-js to load javascript files.
+        """
+        if hasattr(self, 'wait_for_js'):
+            self.wait_for_js()  # pylint: disable=no-member
 
     def refresh_and_wait_for_load(self):
         """
@@ -49,6 +58,10 @@ class SettingsPage(CoursePage):
         """
         Returns the pre-requisite course drop down field options.
         """
+        self.wait_for_element_visibility(
+            '#pre-requisite-course',
+            'Prerequisite course element is available'
+        )
         return self.get_elements('#pre-requisite-course')
 
     @property
@@ -56,6 +69,10 @@ class SettingsPage(CoursePage):
         """
         Returns the enable entrance exam checkbox.
         """
+        self.wait_for_element_visibility(
+            '#entrance-exam-enabled',
+            'Entrance exam checkbox is available'
+        )
         return self.get_element('#entrance-exam-enabled')
 
     @property
@@ -64,6 +81,10 @@ class SettingsPage(CoursePage):
         Returns the alert confirmation element, which contains text
         such as 'Your changes have been saved.'
         """
+        self.wait_for_element_visibility(
+            '#alert-confirmation-title',
+            'Alert confirmation title element is available'
+        )
         return self.get_element('#alert-confirmation-title')
 
     @property
@@ -170,4 +191,5 @@ class SettingsPage(CoursePage):
                 lambda: self.q(css='body.view-settings').present,
                 'Page is refreshed'
             ).fulfill()
+        self.wait_for_require_js()
         self.wait_for_ajax()

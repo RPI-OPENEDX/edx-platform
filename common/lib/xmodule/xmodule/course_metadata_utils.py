@@ -6,6 +6,7 @@ allows us to share code between the CourseDescriptor and CourseOverview
 classes, which both need these type of functions.
 """
 from datetime import datetime
+from datetime import timedelta
 from base64 import b32encode
 
 from django.utils.timezone import UTC
@@ -105,6 +106,18 @@ def has_course_ended(end_date):
     return datetime.now(UTC()) > end_date if end_date is not None else False
 
 
+def course_starts_within(start_date, look_ahead_days):
+    """
+    Given a course's start datetime and look ahead days, returns True if
+    course's start date falls within look ahead days otherwise False
+
+    Arguments:
+        start_date (datetime): The start datetime of the course in question.
+        look_ahead_days (int): number of days to see in future for course start date.
+    """
+    return datetime.now(UTC()) + timedelta(days=look_ahead_days) > start_date
+
+
 def course_start_date_is_default(start, advertised_start):
     """
     Returns whether a course's start date hasn't yet been set.
@@ -132,7 +145,7 @@ def _datetime_to_string(date_time, format_string, strftime_localized):
     # TODO: Is manually appending UTC really the right thing to do here? What if date_time isn't UTC?
     result = strftime_localized(date_time, format_string)
     return (
-        result + u" UTC" if format_string in ['DATE_TIME', 'TIME']
+        result + u" UTC" if format_string in ['DATE_TIME', 'TIME', 'DAY_AND_TIME']
         else result
     )
 
@@ -157,12 +170,13 @@ def course_start_datetime_text(start_date, advertised_start, format_string, uget
         try:
             # from_json either returns a Date, returns None, or raises a ValueError
             parsed_advertised_start = Date().from_json(advertised_start)
+            if parsed_advertised_start is not None:
+                # In the Django implementation of strftime_localized, if
+                # the year is <1900, _datetime_to_string will raise a ValueError.
+                return _datetime_to_string(parsed_advertised_start, format_string, strftime_localized)
         except ValueError:
-            parsed_advertised_start = None
-        return (
-            _datetime_to_string(parsed_advertised_start, format_string, strftime_localized) if parsed_advertised_start
-            else advertised_start.title()
-        )
+            pass
+        return advertised_start.title()
     elif start_date != DEFAULT_START_DATE:
         return _datetime_to_string(start_date, format_string, strftime_localized)
     else:

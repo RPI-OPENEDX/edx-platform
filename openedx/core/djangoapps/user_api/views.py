@@ -25,7 +25,7 @@ import third_party_auth
 from django_comment_common.models import Role
 from edxmako.shortcuts import marketing_link
 from student.views import create_account_with_params
-from student.helpers import set_logged_in_cookie
+from student.cookies import set_logged_in_cookies
 from openedx.core.lib.api.authentication import SessionAuthenticationAllowInactiveUser
 from util.json_request import JsonResponse
 from .preferences.api import update_email_opt_in
@@ -196,7 +196,7 @@ class RegistrationView(APIView):
 
         # Map field names to the instance method used to add the field to the form
         self.field_handlers = {}
-        for field_name in (self.DEFAULT_FIELDS + self.EXTRA_FIELDS):
+        for field_name in self.DEFAULT_FIELDS + self.EXTRA_FIELDS:
             handler = getattr(self, "_add_{field_name}_field".format(field_name=field_name))
             self.field_handlers[field_name] = handler
 
@@ -270,7 +270,7 @@ class RegistrationView(APIView):
                 # Translators: This message is shown to users who attempt to create a new
                 # account using an email address associated with an existing account.
                 "email": _(
-                    u"It looks like {email_address} belongs to an existing account. Try again with a different email address."
+                    u"It looks like {email_address} belongs to an existing account. Try again with a different email address."  # pylint: disable=line-too-long
                 ).format(email_address=email),
                 # Translators: This message is shown to users who attempt to create a new
                 # account using a username associated with an existing account.
@@ -295,7 +295,7 @@ class RegistrationView(APIView):
             data["terms_of_service"] = data["honor_code"]
 
         try:
-            create_account_with_params(request, data)
+            user = create_account_with_params(request, data)
         except ValidationError as err:
             # Should only get non-field errors from this function
             assert NON_FIELD_ERRORS not in err.message_dict
@@ -307,7 +307,7 @@ class RegistrationView(APIView):
             return JsonResponse(errors, status=400)
 
         response = JsonResponse({"success": True})
-        set_logged_in_cookie(request, response)
+        set_logged_in_cookies(request, response, user)
         return response
 
     def _add_email_field(self, form_desc, required=True):
@@ -449,11 +449,13 @@ class RegistrationView(APIView):
         # form used to select the user's highest completed level of education.
         education_level_label = _(u"Highest level of education completed")
 
+        # The labels are marked for translation in UserProfile model definition.
+        options = [(name, _(label)) for name, label in UserProfile.LEVEL_OF_EDUCATION_CHOICES]  # pylint: disable=translation-of-non-string
         form_desc.add_field(
             "level_of_education",
             label=education_level_label,
             field_type="select",
-            options=UserProfile.LEVEL_OF_EDUCATION_CHOICES,
+            options=options,
             include_default_option=True,
             required=required
         )
@@ -472,11 +474,13 @@ class RegistrationView(APIView):
         # form used to select the user's gender.
         gender_label = _(u"Gender")
 
+        # The labels are marked for translation in UserProfile model definition.
+        options = [(name, _(label)) for name, label in UserProfile.GENDER_CHOICES]  # pylint: disable=translation-of-non-string
         form_desc.add_field(
             "gender",
             label=gender_label,
             field_type="select",
-            options=UserProfile.GENDER_CHOICES,
+            options=options,
             include_default_option=True,
             required=required
         )
@@ -720,29 +724,30 @@ class RegistrationView(APIView):
         if third_party_auth.is_enabled():
             running_pipeline = third_party_auth.pipeline.get(request)
             if running_pipeline:
-                current_provider = third_party_auth.provider.Registry.get_by_backend_name(running_pipeline.get('backend'))
+                current_provider = third_party_auth.provider.Registry.get_from_pipeline(running_pipeline)
 
-                # Override username / email / full name
-                field_overrides = current_provider.get_register_form_data(
-                    running_pipeline.get('kwargs')
-                )
+                if current_provider:
+                    # Override username / email / full name
+                    field_overrides = current_provider.get_register_form_data(
+                        running_pipeline.get('kwargs')
+                    )
 
-                for field_name in self.DEFAULT_FIELDS:
-                    if field_name in field_overrides:
-                        form_desc.override_field_properties(
-                            field_name, default=field_overrides[field_name]
-                        )
+                    for field_name in self.DEFAULT_FIELDS:
+                        if field_name in field_overrides:
+                            form_desc.override_field_properties(
+                                field_name, default=field_overrides[field_name]
+                            )
 
-                # Hide the password field
-                form_desc.override_field_properties(
-                    "password",
-                    default="",
-                    field_type="hidden",
-                    required=False,
-                    label="",
-                    instructions="",
-                    restrictions={}
-                )
+                    # Hide the password field
+                    form_desc.override_field_properties(
+                        "password",
+                        default="",
+                        field_type="hidden",
+                        required=False,
+                        label="",
+                        instructions="",
+                        restrictions={}
+                    )
 
 
 class PasswordResetView(APIView):
@@ -799,6 +804,9 @@ class PasswordResetView(APIView):
 
 
 class UserViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    DRF class for interacting with the User ORM object
+    """
     authentication_classes = (authentication.SessionAuthentication,)
     permission_classes = (ApiKeyHeaderPermission,)
     queryset = User.objects.all().prefetch_related("preferences")
@@ -822,7 +830,7 @@ class ForumRoleUsersListView(generics.ListAPIView):
         Return a list of users with the specified role/course pair
         """
         name = self.kwargs['name']
-        course_id_string = self.request.QUERY_PARAMS.get('course_id')
+        course_id_string = self.request.query_params.get('course_id')
         if not course_id_string:
             raise ParseError('course_id must be specified')
         course_id = SlashSeparatedCourseKey.from_deprecated_string(course_id_string)
@@ -832,6 +840,9 @@ class ForumRoleUsersListView(generics.ListAPIView):
 
 
 class UserPreferenceViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    DRF class for interacting with the UserPreference ORM
+    """
     authentication_classes = (authentication.SessionAuthentication,)
     permission_classes = (ApiKeyHeaderPermission,)
     queryset = UserPreference.objects.all()
@@ -843,6 +854,9 @@ class UserPreferenceViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class PreferenceUsersListView(generics.ListAPIView):
+    """
+    DRF class for listing a user's preferences
+    """
     authentication_classes = (authentication.SessionAuthentication,)
     permission_classes = (ApiKeyHeaderPermission,)
     serializer_class = UserSerializer
@@ -874,7 +888,7 @@ class UpdateEmailOptInPreference(APIView):
                     assume False.
 
         """
-        course_id = request.DATA['course_id']
+        course_id = request.data['course_id']
         try:
             org = locator.CourseLocator.from_string(course_id).org
         except InvalidKeyError:
@@ -884,6 +898,6 @@ class UpdateEmailOptInPreference(APIView):
                 content_type="text/plain"
             )
         # Only check for true. All other values are False.
-        email_opt_in = request.DATA['email_opt_in'].lower() == 'true'
+        email_opt_in = request.data['email_opt_in'].lower() == 'true'
         update_email_opt_in(request.user, org, email_opt_in)
         return HttpResponse(status=status.HTTP_200_OK)

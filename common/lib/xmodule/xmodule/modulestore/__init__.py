@@ -101,6 +101,9 @@ class ModuleStoreEnum(object):
         # user ID to use for tests that do not have a django user available
         test = -3
 
+        # user ID for automatic update by the system
+        system = -4
+
     class SortOrder(object):
         """
         Values for sorting asset metadata.
@@ -169,6 +172,7 @@ class BulkOperationsMixin(object):
     def __init__(self, *args, **kwargs):
         super(BulkOperationsMixin, self).__init__(*args, **kwargs)
         self._active_bulk_ops = ActiveBulkThread(self._bulk_ops_record_type)
+        self.signal_handler = None
 
     @contextmanager
     def bulk_operations(self, course_id, emit_signals=True):
@@ -263,6 +267,12 @@ class BulkOperationsMixin(object):
         if not bulk_ops_record.active:
             return
 
+        # Send the pre-publish signal within the context of the bulk operation.
+        # Writes performed by signal handlers will be persisted when the bulk
+        # operation ends.
+        if emit_signals and bulk_ops_record.is_root:
+            self.send_pre_publish_signal(bulk_ops_record, structure_key)
+
         bulk_ops_record.unnest()
 
         # If this wasn't the outermost context, then don't close out the
@@ -292,22 +302,29 @@ class BulkOperationsMixin(object):
         """
         return self._get_bulk_ops_record(course_key, ignore_case).active
 
+    def send_pre_publish_signal(self, bulk_ops_record, course_id):
+        """
+        Send a signal just before items are published in the course.
+        """
+        signal_handler = getattr(self, "signal_handler", None)
+        if signal_handler and bulk_ops_record.has_publish_item:
+            signal_handler.send("pre_publish", course_key=course_id)
+
     def send_bulk_published_signal(self, bulk_ops_record, course_id):
         """
         Sends out the signal that items have been published from within this course.
         """
-        signal_handler = getattr(self, 'signal_handler', None)
-        if signal_handler and bulk_ops_record.has_publish_item:
-            signal_handler.send("course_published", course_key=course_id)
+        if self.signal_handler and bulk_ops_record.has_publish_item:
+            # We remove the branch, because publishing always means copying from draft to published
+            self.signal_handler.send("course_published", course_key=course_id.for_branch(None))
             bulk_ops_record.has_publish_item = False
 
     def send_bulk_library_updated_signal(self, bulk_ops_record, library_id):
         """
         Sends out the signal that library have been updated.
         """
-        signal_handler = getattr(self, 'signal_handler', None)
-        if signal_handler and bulk_ops_record.has_library_updated_item:
-            signal_handler.send("library_updated", library_key=library_id)
+        if self.signal_handler and bulk_ops_record.has_library_updated_item:
+            self.signal_handler.send("library_updated", library_key=library_id)
             bulk_ops_record.has_library_updated_item = False
 
 
@@ -377,6 +394,19 @@ class EditInfo(object):
             source_version="UNSET" if self.source_version is None else self.source_version,
         )  # pylint: disable=bad-continuation
 
+    def __eq__(self, edit_info):
+        """
+        Two EditInfo instances are equal iff their storable representations
+        are equal.
+        """
+        return self.to_storable() == edit_info.to_storable()
+
+    def __neq__(self, edit_info):
+        """
+        Two EditInfo instances are not equal if they're not equal.
+        """
+        return not self == edit_info
+
 
 class BlockData(object):
     """
@@ -433,6 +463,19 @@ class BlockData(object):
             self=self,
             classname=self.__class__.__name__,
         )  # pylint: disable=bad-continuation
+
+    def __eq__(self, block_data):
+        """
+        Two BlockData objects are equal iff all their attributes are equal.
+        """
+        attrs = ['fields', 'block_type', 'definition', 'defaults', 'edit_info']
+        return all(getattr(self, attr) == getattr(block_data, attr) for attr in attrs)
+
+    def __neq__(self, block_data):
+        """
+        Just define this as not self.__eq__(block_data)
+        """
+        return not self == block_data
 
 
 new_contract('BlockData', BlockData)
@@ -1096,7 +1139,7 @@ class ModuleStoreReadBase(BulkOperationsMixin, ModuleStoreRead):
         contentstore=None,
         doc_store_config=None,  # ignore if passed up
         metadata_inheritance_cache_subsystem=None, request_cache=None,
-        xblock_mixins=(), xblock_select=None,
+        xblock_mixins=(), xblock_select=None, disabled_xblock_types=(),  # pylint: disable=bad-continuation
         # temporary parms to enable backward compatibility. remove once all envs migrated
         db=None, collection=None, host=None, port=None, tz_aware=True, user=None, password=None,
         # allow lower level init args to pass harmlessly
@@ -1113,6 +1156,7 @@ class ModuleStoreReadBase(BulkOperationsMixin, ModuleStoreRead):
         self.request_cache = request_cache
         self.xblock_mixins = xblock_mixins
         self.xblock_select = xblock_select
+        self.disabled_xblock_types = disabled_xblock_types
         self.contentstore = contentstore
 
     def get_course_errors(self, course_key):
@@ -1124,7 +1168,7 @@ class ModuleStoreReadBase(BulkOperationsMixin, ModuleStoreRead):
         # pylint: disable=fixme
         # TODO (vshnayder): post-launch, make errors properties of items
         # self.get_item(location)
-        assert(isinstance(course_key, CourseKey))
+        assert isinstance(course_key, CourseKey)
         return self._course_errors[course_key].errors
 
     def get_errored_courses(self):
@@ -1142,7 +1186,7 @@ class ModuleStoreReadBase(BulkOperationsMixin, ModuleStoreRead):
 
         Default impl--linear search through course list
         """
-        assert(isinstance(course_id, CourseKey))
+        assert isinstance(course_id, CourseKey)
         for course in self.get_courses(**kwargs):
             if course.id == course_id:
                 return course
@@ -1157,7 +1201,7 @@ class ModuleStoreReadBase(BulkOperationsMixin, ModuleStoreRead):
                 to search for whether a potentially conflicting course exists in that case.
         """
         # linear search through list
-        assert(isinstance(course_id, CourseKey))
+        assert isinstance(course_id, CourseKey)
         if ignore_case:
             return next(
                 (
@@ -1302,23 +1346,6 @@ class ModuleStoreWriteBase(ModuleStoreReadBase, ModuleStoreWrite):
         parent.children.append(item.location)
         self.update_item(parent, user_id)
 
-    def _flag_publish_event(self, course_key):
-        """
-        Wrapper around calls to fire the course_published signal
-        Unless we're nested in an active bulk operation, this simply fires the signal
-        otherwise a publish will be signalled at the end of the bulk operation
-
-        Arguments:
-            course_key - course_key to which the signal applies
-        """
-        signal_handler = getattr(self, 'signal_handler', None)
-        if signal_handler:
-            bulk_record = self._get_bulk_ops_record(course_key) if isinstance(self, BulkOperationsMixin) else None
-            if bulk_record and bulk_record.active:
-                bulk_record.has_publish_item = True
-            else:
-                signal_handler.send("course_published", course_key=course_key)
-
     def _flag_library_updated_event(self, library_key):
         """
         Wrapper around calls to fire the library_updated signal
@@ -1326,15 +1353,21 @@ class ModuleStoreWriteBase(ModuleStoreReadBase, ModuleStoreWrite):
         otherwise a publish will be signalled at the end of the bulk operation
 
         Arguments:
-            library_updated - library_updated to which the signal applies
+            library_key - library_key to which the signal applies
         """
-        signal_handler = getattr(self, 'signal_handler', None)
-        if signal_handler:
+        if self.signal_handler:
             bulk_record = self._get_bulk_ops_record(library_key) if isinstance(self, BulkOperationsMixin) else None
             if bulk_record and bulk_record.active:
                 bulk_record.has_library_updated_item = True
             else:
-                signal_handler.send("library_updated", library_key=library_key)
+                self.signal_handler.send("library_updated", library_key=library_key)
+
+    def _emit_course_deleted_signal(self, course_key):
+        """
+        Helper method used to emit the course_deleted signal.
+        """
+        if self.signal_handler:
+            self.signal_handler.send("course_deleted", course_key=course_key)
 
 
 def only_xmodules(identifier, entry_points):

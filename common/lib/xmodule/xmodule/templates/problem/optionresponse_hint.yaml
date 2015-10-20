@@ -1,7 +1,6 @@
 ---
 metadata:
     display_name: Dropdown with Hints and Feedback
-    tab: hint
     markdown: |
 
         You can provide feedback for each available option in a dropdown problem.
@@ -24,6 +23,7 @@ metadata:
         ||A fruit is the fertilized ovary from a flower.||
         ||A fruit contains seeds of the plant.||
 
+hinted: true
 data: |
     <problem>
 

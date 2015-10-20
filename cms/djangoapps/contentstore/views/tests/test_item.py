@@ -29,6 +29,7 @@ from xmodule.modulestore.django import modulestore
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase, TEST_DATA_SPLIT_MODULESTORE
 from xmodule.modulestore.tests.factories import ItemFactory, LibraryFactory, check_mongo_calls, CourseFactory
 from xmodule.x_module import STUDIO_VIEW, STUDENT_VIEW
+from xmodule.course_module import DEFAULT_START_DATE
 from xblock.exceptions import NoSuchHandlerError
 from xblock_django.user_service import DjangoXBlockUserService
 from opaque_keys.edx.keys import UsageKey, CourseKey
@@ -118,9 +119,9 @@ class GetItemTest(ItemTest):
         return resp
 
     @ddt.data(
-        (1, 16, 14, 15, 11),
-        (2, 16, 14, 15, 11),
-        (3, 16, 14, 15, 11),
+        (1, 17, 15, 16, 12),
+        (2, 17, 15, 16, 12),
+        (3, 17, 15, 16, 12),
     )
     @ddt.unpack
     def test_get_query_count(self, branching_factor, chapter_queries, section_queries, unit_queries, problem_queries):
@@ -136,9 +137,9 @@ class GetItemTest(ItemTest):
             self.client.get(reverse_usage_url('xblock_handler', self.populated_usage_keys['problem'][-1]))
 
     @ddt.data(
-        (1, 26),
-        (2, 28),
-        (3, 30),
+        (1, 30),
+        (2, 32),
+        (3, 34),
     )
     @ddt.unpack
     def test_container_get_query_count(self, branching_factor, unit_queries,):
@@ -308,6 +309,52 @@ class GetItemTest(ItemTest):
             data={'enable_paging': 'true', 'page_number': page_number, 'page_size': page_size},
             content_contains="Couldn't parse paging parameters"
         )
+
+    def test_get_user_partitions_and_groups(self):
+        self.course.user_partitions = [
+            UserPartition(
+                id=0,
+                name="Verification user partition",
+                scheme=UserPartition.get_scheme("verification"),
+                description="Verification user partition",
+                groups=[
+                    Group(id=0, name="Group A"),
+                    Group(id=1, name="Group B"),
+                ],
+            ),
+        ]
+        self.store.update_item(self.course, self.user.id)
+
+        # Create an item and retrieve it
+        resp = self.create_xblock(category='vertical')
+        usage_key = self.response_usage_key(resp)
+        resp = self.client.get(reverse_usage_url('xblock_handler', usage_key))
+        self.assertEqual(resp.status_code, 200)
+
+        # Check that the partition and group information was returned
+        result = json.loads(resp.content)
+        self.assertEqual(result["user_partitions"], [
+            {
+                "id": 0,
+                "name": "Verification user partition",
+                "scheme": "verification",
+                "groups": [
+                    {
+                        "id": 0,
+                        "name": "Group A",
+                        "selected": False,
+                        "deleted": False,
+                    },
+                    {
+                        "id": 1,
+                        "name": "Group B",
+                        "selected": False,
+                        "deleted": False,
+                    },
+                ]
+            }
+        ])
+        self.assertEqual(result["group_access"], {})
 
 
 @ddt.ddt
@@ -1413,7 +1460,7 @@ class TestXBlockInfo(ItemTest):
 
     @ddt.data(
         (ModuleStoreEnum.Type.split, 5, 5),
-        (ModuleStoreEnum.Type.mongo, 4, 6),
+        (ModuleStoreEnum.Type.mongo, 5, 7),
     )
     @ddt.unpack
     def test_xblock_outline_handler_mongo_calls(self, store_type, chapter_queries, chapter_queries_1):
@@ -1531,11 +1578,13 @@ class TestXBlockInfo(ItemTest):
 
     def test_vertical_xblock_info(self):
         vertical = modulestore().get_item(self.vertical.location)
+
         xblock_info = create_xblock_info(
             vertical,
             include_child_info=True,
             include_children_predicate=ALWAYS,
-            include_ancestor_info=True
+            include_ancestor_info=True,
+            user=self.user
         )
         add_container_page_publishing_info(vertical, xblock_info)
         self.validate_vertical_xblock_info(xblock_info)
@@ -1548,6 +1597,29 @@ class TestXBlockInfo(ItemTest):
             include_children_predicate=ALWAYS
         )
         self.validate_component_xblock_info(xblock_info)
+
+    @ddt.data(ModuleStoreEnum.Type.split, ModuleStoreEnum.Type.mongo)
+    def test_validate_start_date(self, store_type):
+        """
+        Validate if start-date year is less than 1900 reset the date to DEFAULT_START_DATE.
+        """
+        with self.store.default_store(store_type):
+            course = CourseFactory.create()
+            chapter = ItemFactory.create(
+                parent_location=course.location, category='chapter', display_name='Week 1'
+            )
+
+            chapter.start = datetime(year=1899, month=1, day=1, tzinfo=UTC)
+
+            xblock_info = create_xblock_info(
+                chapter,
+                include_child_info=True,
+                include_children_predicate=ALWAYS,
+                include_ancestor_info=True,
+                user=self.user
+            )
+
+            self.assertEqual(xblock_info['start'], DEFAULT_START_DATE.strftime('%Y-%m-%dT%H:%M:%SZ'))
 
     def validate_course_xblock_info(self, xblock_info, has_child_info=True, course_outline=False):
         """
@@ -1658,6 +1730,38 @@ class TestXBlockInfo(ItemTest):
                     )
         else:
             self.assertIsNone(xblock_info.get('child_info', None))
+
+    @patch.dict('django.conf.settings.FEATURES', {'ENABLE_PROCTORED_EXAMS': True})
+    def test_proctored_exam_xblock_info(self):
+        self.course.enable_proctored_exams = True
+        self.course.save()
+        self.store.update_item(self.course, self.user.id)
+
+        course = modulestore().get_item(self.course.location)
+        xblock_info = create_xblock_info(
+            course,
+            include_child_info=True,
+            include_children_predicate=ALWAYS,
+        )
+        # exam proctoring should be enabled and time limited.
+        self.assertEqual(xblock_info['enable_proctored_exams'], True)
+
+        sequential = ItemFactory.create(
+            parent_location=self.chapter.location, category='sequential',
+            display_name="Test Lesson 1", user_id=self.user.id,
+            is_proctored_enabled=True, is_time_limited=True,
+            default_time_limit_minutes=100
+        )
+        sequential = modulestore().get_item(sequential.location)
+        xblock_info = create_xblock_info(
+            sequential,
+            include_child_info=True,
+            include_children_predicate=ALWAYS,
+        )
+        # exam proctoring should be enabled and time limited.
+        self.assertEqual(xblock_info['is_proctored_enabled'], True)
+        self.assertEqual(xblock_info['is_time_limited'], True)
+        self.assertEqual(xblock_info['default_time_limit_minutes'], 100)
 
 
 class TestLibraryXBlockInfo(ModuleStoreTestCase):

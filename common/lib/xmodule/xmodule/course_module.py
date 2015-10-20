@@ -5,7 +5,7 @@ import logging
 from cStringIO import StringIO
 from math import exp
 from lxml import etree
-from path import path  # NOTE (THK): Only used for detecting presence of syllabus
+from path import Path as path
 import requests
 from datetime import datetime
 import dateutil.parser
@@ -16,10 +16,11 @@ from xmodule.course_metadata_utils import DEFAULT_START_DATE
 from xmodule.exceptions import UndefinedContext
 from xmodule.seq_module import SequenceDescriptor, SequenceModule
 from xmodule.graders import grader_from_conf
-from xmodule.tabs import CourseTabList
+from xmodule.tabs import CourseTabList, InvalidTabsException
 from xmodule.mixin import LicenseMixin
 import json
 
+from xblock.core import XBlock
 from xblock.fields import Scope, List, String, Dict, Boolean, Integer, Float
 from .fields import Date
 from django.utils.timezone import UTC
@@ -117,7 +118,7 @@ class Textbook(object):
             pass
 
         # Get the table of contents from S3
-        log.info("Retrieving textbook table of contents from %s" % toc_url)
+        log.info("Retrieving textbook table of contents from %s", toc_url)
         try:
             r = requests.get(toc_url)
         except Exception as err:
@@ -712,6 +713,12 @@ class CourseFields(object):
         scope=Scope.settings,
         default=""
     )
+    cert_html_view_enabled = Boolean(
+        display_name=_("Certificate Web/HTML View Enabled"),
+        help=_("If true, certificate Web/HTML views are enabled for the course."),
+        scope=Scope.settings,
+        default=False,
+    )
     cert_html_view_overrides = Dict(
         # Translators: This field is the container for course-specific certifcate configuration values
         display_name=_("Certificate Web/HTML View Overrides"),
@@ -897,6 +904,16 @@ class CourseFields(object):
             "Enter configuration for the teams feature. Expects two entries: max_team_size and topics, where "
             "topics is a list of topics."
         ),
+        scope=Scope.settings,
+        deprecated=True,  # Deprecated until the teams feature is made generally available
+    )
+
+    enable_proctored_exams = Boolean(
+        display_name=_("Enable Proctored Exams"),
+        help=_(
+            "Enter true or false. If this value is true, timed and proctored exams are enabled in your course."
+        ),
+        default=False,
         scope=Scope.settings
     )
 
@@ -919,7 +936,7 @@ class CourseModule(CourseFields, SequenceModule):  # pylint: disable=abstract-me
     """
 
 
-class CourseDescriptor(CourseFields, LicenseMixin, SequenceDescriptor):
+class CourseDescriptor(CourseFields, SequenceDescriptor, LicenseMixin):
     """
     The descriptor for the course XModule
     """
@@ -959,8 +976,11 @@ class CourseDescriptor(CourseFields, LicenseMixin, SequenceDescriptor):
         if self.discussion_topics == {}:
             self.discussion_topics = {_('General'): {'id': self.location.html_id()}}
 
-        if not getattr(self, "tabs", []):
-            CourseTabList.initialize_default(self)
+        try:
+            if not getattr(self, "tabs", []):
+                CourseTabList.initialize_default(self)
+        except InvalidTabsException as err:
+            raise type(err)('{msg} For course: {course_id}'.format(msg=err.message, course_id=unicode(self.id)))
 
     def set_grading_policy(self, course_policy):
         """
@@ -1002,7 +1022,7 @@ class CourseDescriptor(CourseFields, LicenseMixin, SequenceDescriptor):
                     policy_str = grading_policy_file.read()
                     # if we successfully read the file, stop looking at backups
                     break
-            except (IOError):
+            except IOError:
                 msg = "Unable to load course settings file from '{0}'".format(policy_path)
                 log.warning(msg)
 
@@ -1315,11 +1335,15 @@ class CourseDescriptor(CourseFields, LicenseMixin, SequenceDescriptor):
         except UndefinedContext:
             module = self
 
+        def possibly_scored(usage_key):
+            """Can this XBlock type can have a score or children?"""
+            return usage_key.block_type in self.block_types_affecting_grading
+
         all_descriptors = []
         graded_sections = {}
 
         def yield_descriptor_descendents(module_descriptor):
-            for child in module_descriptor.get_children():
+            for child in module_descriptor.get_children(usage_key_filter=possibly_scored):
                 yield child
                 for module_descriptor in yield_descriptor_descendents(child):
                     yield module_descriptor
@@ -1344,6 +1368,15 @@ class CourseDescriptor(CourseFields, LicenseMixin, SequenceDescriptor):
 
         return {'graded_sections': graded_sections,
                 'all_descriptors': all_descriptors, }
+
+    @lazy
+    def block_types_affecting_grading(self):
+        """Return all block types that could impact grading (i.e. scored, or having children)."""
+        return frozenset(
+            cat for (cat, xblock_class) in XBlock.load_classes() if (
+                getattr(xblock_class, 'has_score', False) or getattr(xblock_class, 'has_children', False)
+            )
+        )
 
     @staticmethod
     def make_id(org, course, url_name):
@@ -1503,3 +1536,39 @@ class CourseDescriptor(CourseFields, LicenseMixin, SequenceDescriptor):
         Returns the topics that have been configured for teams for this course, else None.
         """
         return self.teams_configuration.get('topics', None)
+
+    def get_user_partitions_for_scheme(self, scheme):
+        """
+        Retrieve all user partitions defined in the course for a particular
+        partition scheme.
+
+        Arguments:
+            scheme (object): The user partition scheme.
+
+        Returns:
+            list of `UserPartition`
+
+        """
+        return [
+            p for p in self.user_partitions
+            if p.scheme == scheme
+        ]
+
+    def set_user_partitions_for_scheme(self, partitions, scheme):
+        """
+        Set the user partitions for a particular scheme.
+
+        Preserves partitions associated with other schemes.
+
+        Arguments:
+            scheme (object): The user partition scheme.
+
+        Returns:
+            list of `UserPartition`
+
+        """
+        other_partitions = [
+            p for p in self.user_partitions  # pylint: disable=access-member-before-definition
+            if p.scheme != scheme
+        ]
+        self.user_partitions = other_partitions + partitions  # pylint: disable=attribute-defined-outside-init
