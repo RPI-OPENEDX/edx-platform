@@ -3,6 +3,9 @@
 """
 Acceptance tests for Video.
 """
+import os
+
+from mock import patch
 from nose.plugins.attrib import attr
 from unittest import skipIf, skip
 from ..helpers import UniqueCourseTest, is_youtube_available, YouTubeStubConfig
@@ -30,7 +33,6 @@ HTML5_SOURCES_INCORRECT = [
 ]
 
 
-@attr('shard_4')
 @skipIf(is_youtube_available() is False, 'YouTube is not available!')
 class VideoBaseTest(UniqueCourseTest):
     """
@@ -192,6 +194,7 @@ class VideoBaseTest(UniqueCourseTest):
         self.video.wait_for_video_player_render()
 
 
+@attr('shard_4')
 class YouTubeVideoTest(VideoBaseTest):
     """ Test YouTube Video Player """
 
@@ -209,9 +212,9 @@ class YouTubeVideoTest(VideoBaseTest):
         # Verify that video has rendered in "Youtube" mode
         self.assertTrue(self.video.is_video_rendered('youtube'))
 
-    def test_cc_button_wo_english_transcript(self):
+    def test_transcript_button_wo_english_transcript(self):
         """
-        Scenario: CC button works correctly w/o english transcript in Youtube mode
+        Scenario: Transcript button works correctly w/o english transcript in Youtube mode
         Given the course has a Video component in "Youtube" mode
         And I have defined a non-english transcript for the video
         And I have uploaded a non-english transcript file to assets
@@ -223,13 +226,38 @@ class YouTubeVideoTest(VideoBaseTest):
         self.navigate_to_video()
         self.video.show_captions()
 
-        # Verify that we see "好 各位同学" text in the captions
+        # Verify that we see "好 各位同学" text in the transcript
         unicode_text = "好 各位同学".decode('utf-8')
         self.assertIn(unicode_text, self.video.captions_text)
 
-    def test_cc_button_transcripts_and_sub_fields_empty(self):
+    def test_cc_button(self):
         """
-        Scenario: CC button works correctly if transcripts and sub fields are empty,
+        Scenario: CC button works correctly with transcript in YouTube mode
+        Given the course has a video component in "Youtube" mode
+        And I have defined a transcript for the video
+        Then I see the closed captioning element over the video
+        """
+        data = {'transcripts': {'zh': 'chinese_transcripts.srt'}}
+        self.metadata = self.metadata_for_mode('youtube', data)
+        self.assets.append('chinese_transcripts.srt')
+        self.navigate_to_video()
+
+        # Show captions and make sure they're visible and cookie is set
+        self.video.show_closed_captions()
+        self.video.wait_for_closed_captions()
+        self.assertTrue(self.video.is_closed_captions_visible)
+        self.video.reload_page()
+        self.assertTrue(self.video.is_closed_captions_visible)
+
+        # Hide captions and make sure they're hidden and cookie is unset
+        self.video.hide_closed_captions()
+        self.video.wait_for_closed_captions_to_be_hidden()
+        self.video.reload_page()
+        self.video.wait_for_closed_captions_to_be_hidden()
+
+    def test_transcript_button_transcripts_and_sub_fields_empty(self):
+        """
+        Scenario: Transcript button works correctly if transcripts and sub fields are empty,
             but transcript file exists in assets (Youtube mode of Video component)
         Given the course has a Video component in "Youtube" mode
         And I have uploaded a .srt.sjson file to assets
@@ -244,14 +272,14 @@ class YouTubeVideoTest(VideoBaseTest):
         # Verify that we see "Welcome to edX." text in the captions
         self.assertIn('Welcome to edX.', self.video.captions_text)
 
-    def test_cc_button_hidden_no_translations(self):
+    def test_transcript_button_hidden_no_translations(self):
         """
-        Scenario: CC button is hidden if no translations
+        Scenario: Transcript button is hidden if no translations
         Given the course has a Video component in "Youtube" mode
-        Then the "CC" button is hidden
+        Then the "Transcript" button is hidden
         """
         self.navigate_to_video()
-        self.assertFalse(self.video.is_button_shown('CC'))
+        self.assertFalse(self.video.is_button_shown('transcript_button'))
 
     def test_fullscreen_video_alignment_with_transcript_hidden(self):
         """
@@ -348,8 +376,8 @@ class YouTubeVideoTest(VideoBaseTest):
         # check if video aligned correctly with enabled transcript
         self.assertTrue(self.video.is_aligned(True))
 
-        # click video button "CC"
-        self.video.click_player_button('CC')
+        # click video button "transcript"
+        self.video.click_player_button('transcript_button')
 
         # check if video aligned correctly without enabled transcript
         self.assertTrue(self.video.is_aligned(False))
@@ -384,13 +412,36 @@ class YouTubeVideoTest(VideoBaseTest):
 
         self.assertTrue(self.video.is_video_rendered('html5'))
 
-    def test_video_with_youtube_blocked(self):
+    def test_video_with_youtube_blocked_with_default_response_time(self):
+        """
+        Scenario: Video is rendered in HTML5 mode when the YouTube API is blocked
+        Given the YouTube API is blocked
+        And the course has a Video component in "Youtube_HTML5" mode
+        Then the video has rendered in "HTML5" mode
+        And only one video has rendered
+        """
+        # configure youtube server
+        self.youtube_configuration.update({
+            'youtube_api_blocked': True,
+        })
+
+        self.metadata = self.metadata_for_mode('youtube_html5')
+
+        self.navigate_to_video()
+
+        self.assertTrue(self.video.is_video_rendered('html5'))
+
+        # The video should only be loaded once
+        self.assertEqual(len(self.video.q(css='video')), 1)
+
+    def test_video_with_youtube_blocked_delayed_response_time(self):
         """
         Scenario: Video is rendered in HTML5 mode when the YouTube API is blocked
         Given the YouTube server response time is greater than 1.5 seconds
         And the YouTube API is blocked
         And the course has a Video component in "Youtube_HTML5" mode
         Then the video has rendered in "HTML5" mode
+        And only one video has rendered
         """
         # configure youtube server
         self.youtube_configuration.update({
@@ -404,7 +455,38 @@ class YouTubeVideoTest(VideoBaseTest):
 
         self.assertTrue(self.video.is_video_rendered('html5'))
 
-    @skip('Failing on master; To see remove is_youtube_available() form base class')
+        # The video should only be loaded once
+        self.assertEqual(len(self.video.q(css='video')), 1)
+
+    def test_html5_video_rendered_with_youtube_captions(self):
+        """
+        Scenario: User should see Youtube captions for If there are no transcripts
+        available for HTML5 mode
+        Given that I have uploaded a .srt.sjson file to assets for Youtube mode
+        And the YouTube API is blocked
+        And the course has a Video component in "Youtube_HTML5" mode
+        And Video component rendered in HTML5 mode
+        And Html5 mode video has no transcripts
+        When I see the captions for HTML5 mode video
+        Then I should see the Youtube captions
+        """
+        self.assets.append('subs_3_yD_cEKoCk.srt.sjson')
+        # configure youtube server
+        self.youtube_configuration.update({
+            'time_to_response': 2.0,
+            'youtube_api_blocked': True,
+        })
+
+        data = {'sub': '3_yD_cEKoCk'}
+        self.metadata = self.metadata_for_mode('youtube_html5', additional_data=data)
+
+        self.navigate_to_video()
+
+        self.assertTrue(self.video.is_video_rendered('html5'))
+        # check if caption button is visible
+        self.assertTrue(self.video.is_button_shown('transcript_button'))
+        self._verify_caption_text('Welcome to edX.')
+
     def test_download_transcript_button_works_correctly(self):
         """
         Scenario: Download Transcript button works correctly
@@ -465,6 +547,16 @@ class YouTubeVideoTest(VideoBaseTest):
             timeout=5
         )
 
+    def _verify_closed_caption_text(self, text):
+        """
+        Scenario: returns True if the captions are visible, False is else
+        """
+        self.video.wait_for(
+            lambda: (text in self.video.closed_captions_text),
+            u'Closed captions contain "{}" text'.format(text),
+            timeout=5
+        )
+
     def test_video_language_menu_working(self):
         """
         Scenario: Language menu works correctly in Video component
@@ -496,6 +588,43 @@ class YouTubeVideoTest(VideoBaseTest):
 
         self.video.select_language('en')
         self._verify_caption_text('Welcome to edX.')
+
+    def test_video_language_menu_working_closed_captions(self):
+        """
+        Scenario: Language menu works correctly in Video component, checks closed captions
+        Given the course has a Video component in "Youtube" mode
+        And I have defined multiple language transcripts for the videos
+        And I make sure captions are closed
+        And I see video menu "language" with correct items
+        And I select language with code "en"
+        Then I see "Welcome to edX." text in the closed captions
+        And I select language with code "zh"
+        Then I see "我们今天要讲的题目是" text in the closed captions
+        """
+        self.assets.extend(['chinese_transcripts.srt', 'subs_3_yD_cEKoCk.srt.sjson'])
+        data = {'transcripts': {"zh": "chinese_transcripts.srt"}, 'sub': '3_yD_cEKoCk'}
+        self.metadata = self.metadata_for_mode('youtube', additional_data=data)
+
+        # go to video
+        self.navigate_to_video()
+        self.video.show_closed_captions()
+
+        correct_languages = {'en': 'English', 'zh': 'Chinese'}
+        self.assertEqual(self.video.caption_languages, correct_languages)
+
+        # we start the video, then pause it to activate the transcript
+        self.video.click_player_button('play')
+        self.video.wait_for_position('0:01')
+        self.video.click_player_button('pause')
+
+        self.video.select_language('en')
+        self.video.click_first_line_in_transcript()
+        self._verify_closed_caption_text('Welcome to edX.')
+
+        self.video.select_language('zh')
+        unicode_text = "我们今天要讲的题目是".decode('utf-8')
+        self.video.click_first_line_in_transcript()
+        self._verify_closed_caption_text(unicode_text)
 
     def test_multiple_videos_in_sequentials_load_and_work(self):
         """
@@ -559,13 +688,15 @@ class YouTubeVideoTest(VideoBaseTest):
         # open video "C"
         self.course_nav.go_to_sequential('C')
 
-        # check if video "C" should start playing at speed "0.75"
-        self.assertEqual(self.video.speed, '0.75x')
+        # Since the playback speed was set to .5 in "B", this video will also be impacted
+        # because a playback speed has never explicitly been set for it. However, this video
+        # does not have a .5 playback option, so the closest possible (.75) should be selected.
+        self.video.verify_speed_changed('0.75x')
 
         # open video "A"
         self.course_nav.go_to_sequential('A')
 
-        # check if video "A" should start playing at speed "2.0"
+        # Video "A" should still play at speed 2.0 because it was explicitly set to that.
         self.assertEqual(self.video.speed, '2.0x')
 
         # reload the page
@@ -583,14 +714,15 @@ class YouTubeVideoTest(VideoBaseTest):
         # open video "B"
         self.course_nav.go_to_sequential('B')
 
-        # check if video "B" should start playing at speed "0.50"
+        # Video "B" should still play at speed .5 because it was explicitly set to that.
         self.assertEqual(self.video.speed, '0.50x')
 
         # open video "C"
         self.course_nav.go_to_sequential('C')
 
-        # check if video "C" should start playing at speed "1.0"
-        self.assertEqual(self.video.speed, '1.0x')
+        # The change of speed for Video "A" should  impact Video "C" because it still has
+        # not been explicitly set to a speed.
+        self.video.verify_speed_changed('1.0x')
 
     def test_video_has_correct_transcript(self):
         """
@@ -713,7 +845,6 @@ class YouTubeVideoTest(VideoBaseTest):
 
         self.assertEqual(self.video.caption_languages, {'zh_HANS': 'Simplified Chinese', 'zh_HANT': 'Traditional Chinese'})
 
-    @skip('Failing on master; To see remove is_youtube_available() form base class')
     def test_video_bumper_render(self):
         """
         Scenario: Multiple videos with bumper in sequentials all load and work, switching between sequentials
@@ -738,7 +869,7 @@ class YouTubeVideoTest(VideoBaseTest):
             u'video_bumper': {
                 u'value': {
                     "transcripts": {},
-                    "video_id": "edx_video_id"
+                    "video_id": "video_001"
                 }
             }
         }
@@ -793,6 +924,7 @@ class YouTubeVideoTest(VideoBaseTest):
         execute_video_steps(tab1_video_names)
 
 
+@attr('shard_4')
 class YouTubeHtml5VideoTest(VideoBaseTest):
     """ Test YouTube HTML5 Video Player """
 
@@ -814,6 +946,7 @@ class YouTubeHtml5VideoTest(VideoBaseTest):
         self.assertTrue(self.video.is_video_rendered('youtube'))
 
 
+@attr('shard_4')
 class Html5VideoTest(VideoBaseTest):
     """ Test HTML5 Video Player """
 
@@ -999,6 +1132,7 @@ class Html5VideoTest(VideoBaseTest):
         self.assertTrue(all([source in HTML5_SOURCES for source in self.video.sources]))
 
 
+@attr('shard_4')
 class YouTubeQualityTest(VideoBaseTest):
     """ Test YouTube Video Quality Button """
 
@@ -1043,3 +1177,36 @@ class YouTubeQualityTest(VideoBaseTest):
         self.video.click_player_button('quality')
 
         self.assertTrue(self.video.is_quality_button_active)
+
+
+@attr('a11y')
+class LMSVideoModuleA11yTest(VideoBaseTest):
+    """
+    LMS Video Accessibility Test Class
+    """
+
+    def setUp(self):
+        browser = os.environ.get('SELENIUM_BROWSER', 'firefox')
+
+        # the a11y tests run in CI under phantomjs which doesn't
+        # support html5 video or flash player, so the video tests
+        # don't work in it. We still want to be able to run these
+        # tests in CI, so override the browser setting if it is
+        # phantomjs.
+        if browser == 'phantomjs':
+            browser = 'firefox'
+
+        with patch.dict(os.environ, {'SELENIUM_BROWSER': browser}):
+            super(LMSVideoModuleA11yTest, self).setUp()
+
+    def test_video_player_a11y(self):
+        self.navigate_to_video()
+
+        # Limit the scope of the audit to the video player only.
+        self.video.a11y_audit.config.set_scope(include=["div.video"])
+        self.video.a11y_audit.config.set_rules({
+            "ignore": [
+                'link-href',  # TODO: AC-223
+            ],
+        })
+        self.video.a11y_audit.check_for_accessibility_errors()

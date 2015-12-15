@@ -8,11 +8,15 @@ from django.conf import settings
 from django.core.urlresolvers import reverse
 from django.test.client import RequestFactory
 from django.test.utils import override_settings
+from edxmako.shortcuts import render_to_response
 
+from ccx.tests.test_views import setup_students_and_grades
 from courseware.tabs import get_course_tab_list
 from courseware.tests.factories import UserFactory
 from courseware.tests.helpers import LoginEnrollmentTestCase
+from instructor.views.gradebook_api import calculate_page_info
 
+from common.test.utils import XssTestMixin
 from student.tests.factories import AdminFactory
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
 from xmodule.modulestore.tests.factories import CourseFactory
@@ -22,8 +26,22 @@ from student.roles import CourseFinanceAdminRole
 from student.models import CourseEnrollment
 
 
+def intercept_renderer(path, context):
+    """
+    Intercept calls to `render_to_response` and attach the context dict to the
+    response for examination in unit tests.
+    """
+    # I think Django already does this for you in their TestClient, except
+    # we're bypassing that by using edxmako.  Probably edxmako should be
+    # integrated better with Django's rendering and event system.
+    response = render_to_response(path, context)
+    response.mako_context = context
+    response.mako_template = path
+    return response
+
+
 @ddt.ddt
-class TestInstructorDashboard(ModuleStoreTestCase, LoginEnrollmentTestCase):
+class TestInstructorDashboard(ModuleStoreTestCase, LoginEnrollmentTestCase, XssTestMixin):
     """
     Tests for the instructor dashboard (not legacy).
     """
@@ -34,13 +52,16 @@ class TestInstructorDashboard(ModuleStoreTestCase, LoginEnrollmentTestCase):
         """
         super(TestInstructorDashboard, self).setUp()
         self.course = CourseFactory.create(
-            grading_policy={"GRADE_CUTOFFS": {"A": 0.75, "B": 0.63, "C": 0.57, "D": 0.5}}
+            grading_policy={"GRADE_CUTOFFS": {"A": 0.75, "B": 0.63, "C": 0.57, "D": 0.5}},
+            display_name='<script>alert("XSS")</script>'
         )
 
-        self.course_mode = CourseMode(course_id=self.course.id,
-                                      mode_slug="honor",
-                                      mode_display_name="honor cert",
-                                      min_price=40)
+        self.course_mode = CourseMode(
+            course_id=self.course.id,
+            mode_slug=CourseMode.DEFAULT_MODE_SLUG,
+            mode_display_name=CourseMode.DEFAULT_MODE.name,
+            min_price=40
+        )
         self.course_mode.save()
         # Create instructor account
         self.instructor = AdminFactory.create()
@@ -86,6 +107,13 @@ class TestInstructorDashboard(ModuleStoreTestCase, LoginEnrollmentTestCase):
         total_amount = PaidCourseRegistration.get_total_amount_of_purchased_item(self.course.id)
         response = self.client.get(self.url)
         self.assertTrue('${amount}'.format(amount=total_amount) in response.content)
+
+    def test_course_name_xss(self):
+        """Test that the instructor dashboard correctly escapes course names
+        with script tags.
+        """
+        response = self.client.get(self.url)
+        self.assert_xss(response, '<script>alert("XSS")</script>')
 
     @override_settings(PAID_COURSE_REGISTRATION_CURRENCY=['PKR', 'Rs'])
     def test_override_currency_settings_in_the_html_response(self):
@@ -243,3 +271,25 @@ class TestInstructorDashboard(ModuleStoreTestCase, LoginEnrollmentTestCase):
         """
         response = self.client.get(self.url)
         self.assertIn('D: 0.5, C: 0.57, B: 0.63, A: 0.75', response.content)
+
+    @patch('instructor.views.gradebook_api.MAX_STUDENTS_PER_PAGE_GRADE_BOOK', 2)
+    def test_calculate_page_info(self):
+        page = calculate_page_info(offset=0, total_students=2)
+        self.assertEqual(page["offset"], 0)
+        self.assertEqual(page["page_num"], 1)
+        self.assertEqual(page["next_offset"], None)
+        self.assertEqual(page["previous_offset"], None)
+        self.assertEqual(page["total_pages"], 1)
+
+    @patch('instructor.views.gradebook_api.render_to_response', intercept_renderer)
+    @patch('instructor.views.gradebook_api.MAX_STUDENTS_PER_PAGE_GRADE_BOOK', 1)
+    def test_spoc_gradebook_pages(self):
+        setup_students_and_grades(self)
+        url = reverse(
+            'spoc_gradebook',
+            kwargs={'course_id': self.course.id}
+        )
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        # Max number of student per page is one.  Patched setting MAX_STUDENTS_PER_PAGE_GRADE_BOOK = 1
+        self.assertEqual(len(response.mako_context['students']), 1)  # pylint: disable=no-member

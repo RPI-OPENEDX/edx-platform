@@ -2,13 +2,14 @@
 
 from django.conf import settings
 from django.core.cache import cache
-from xmodule.modulestore.django import modulestore
 
+from courseware.access import has_access
+from openedx.core.djangoapps.content.course_overviews.models import CourseOverview
 from openedx.core.djangoapps.user_api.models import UserPreference
 from student.models import anonymous_id_for_user
 from student.models import UserProfile
 from lang_pref import LANGUAGE_KEY
-from student.roles import (GlobalStaff, CourseStaffRole, CourseInstructorRole, UserBasedRole)
+from student.roles import GlobalStaff, CourseStaffRole, CourseInstructorRole
 
 
 class OpenIDHandler(object):
@@ -72,7 +73,7 @@ class ProfileHandler(object):
 
         # If the user has no language specified, return the default one.
         if not language:
-            language = getattr(settings, 'LANGUAGE_CODE')
+            language = settings.LANGUAGE_CODE
 
         return language
 
@@ -189,31 +190,23 @@ class CourseAccessHandler(object):
 
         return course_ids
 
+    # pylint: disable=missing-docstring
     def _get_courses_with_access_type(self, user, access_type):
-        """
-        If global staff, returns all courses. Otherwise, returns list of courses
-        based on role access (e.g. courses that course staff has access to).
-        """
-
         # Check the application cache and update if not present. The application
         # cache is useful since there are calls to different endpoints in close
         # succession, for example the id_token and user_info endpoints.
+
         key = '-'.join([str(self.__class__), str(user.id), access_type])
         course_ids = cache.get(key)
 
         if not course_ids:
+            course_keys = CourseOverview.get_all_course_keys()
 
-            if GlobalStaff().has_user(user):
-                # TODO: This code should be optimized in the future to caching
-                # the list of all courses in the system.
-                # The modulestore has all courses, while the roles table only has courses
-                # with roles. Thus, we'll use the modulestore to fetch all courses.
-                courses = _get_all_courses()
-                course_ids = [unicode(course.id) for course in courses]
-            else:
-                # Getting courses based on roles avoid querying mongo and thus faster
-                courses = UserBasedRole(user, access_type).courses_with_role()
-                course_ids = [unicode(course.course_id) for course in courses]
+            # Global staff have access to all courses. Filter courses for non-global staff.
+            if not GlobalStaff().has_user(user):
+                course_keys = [course_key for course_key in course_keys if has_access(user, access_type, course_key)]
+
+            course_ids = [unicode(course_key) for course_key in course_keys]
 
             cache.set(key, course_ids, self.COURSE_CACHE_TIMEOUT)
 
@@ -241,12 +234,3 @@ class IDTokenHandler(OpenIDHandler, ProfileHandler, CourseAccessHandler, Permiss
 class UserInfoHandler(OpenIDHandler, ProfileHandler, CourseAccessHandler, PermissionsHandler):
     """ Configure the UserInfo handler for the LMS. """
     pass
-
-
-def _get_all_courses():
-    """ Utility function to list all available courses. """
-
-    ms_courses = modulestore().get_courses()
-    courses = [course for course in ms_courses if course.scope_ids.block_type == 'course']
-
-    return courses

@@ -11,7 +11,7 @@ import ddt
 from datetime import timedelta
 from fs.osfs import OSFS
 from json import loads
-from path import path
+from path import Path as path
 from textwrap import dedent
 from uuid import uuid4
 from functools import wraps
@@ -23,6 +23,7 @@ from django.test import TestCase
 from django.test.utils import override_settings
 
 from openedx.core.lib.tempdir import mkdtemp_clean
+from common.test.utils import XssTestMixin
 from contentstore.tests.utils import parse_json, AjaxEnabledTestClient, CourseTestCase
 from contentstore.views.component import ADVANCED_COMPONENT_TYPES
 
@@ -36,7 +37,7 @@ from xmodule.modulestore.exceptions import ItemNotFoundError
 from xmodule.modulestore.inheritance import own_metadata
 from opaque_keys.edx.keys import UsageKey, CourseKey
 from opaque_keys.edx.locations import AssetLocation, CourseLocator
-from xmodule.modulestore.tests.factories import CourseFactory, ItemFactory, check_mongo_calls
+from xmodule.modulestore.tests.factories import CourseFactory, ItemFactory, LibraryFactory, check_mongo_calls
 from xmodule.modulestore.xml_exporter import export_course_to_xml
 from xmodule.modulestore.xml_importer import import_course_from_xml, perform_xlint
 
@@ -680,6 +681,16 @@ class MiscCourseTests(ContentStoreTestCase):
         for expected in expected_types:
             self.assertIn(expected, resp.content)
 
+    @ddt.data("<script>alert(1)</script>", "alert('hi')", "</script><script>alert(1)</script>")
+    def test_container_handler_xss_prevent(self, malicious_code):
+        """
+        Test that XSS attack is prevented
+        """
+        resp = self.client.get_html(get_url('container_handler', self.vert_loc) + '?action=' + malicious_code)
+        self.assertEqual(resp.status_code, 200)
+        # Test that malicious code does not appear in html
+        self.assertNotIn(malicious_code, resp.content)
+
     @patch('django.conf.settings.DEPRECATED_ADVANCED_COMPONENT_TYPES', [])
     def test_advanced_components_in_edit_unit(self):
         # This could be made better, but for now let's just assert that we see the advanced modules mentioned in the page
@@ -687,7 +698,7 @@ class MiscCourseTests(ContentStoreTestCase):
         self.check_components_on_page(
             ADVANCED_COMPONENT_TYPES,
             ['Word cloud', 'Annotation', 'Text Annotation', 'Video Annotation', 'Image Annotation',
-             'Open Response Assessment', 'Peer Grading Interface', 'split_test'],
+             'split_test'],
         )
 
     @ddt.data('/Fake/asset/displayname', '\\Fake\\asset\\displayname')
@@ -1115,7 +1126,7 @@ class MiscCourseTests(ContentStoreTestCase):
 
 
 @ddt.ddt
-class ContentStoreTest(ContentStoreTestCase):
+class ContentStoreTest(ContentStoreTestCase, XssTestMixin):
     """
     Tests for the CMS ContentStore application.
     """
@@ -1405,6 +1416,22 @@ class ContentStoreTest(ContentStoreTestCase):
             html=True
         )
 
+    def test_course_index_view_xss(self):
+        """Test that the index page correctly escapes course names with script
+        tags."""
+        CourseFactory.create(
+            display_name='<script>alert("course XSS")</script>'
+        )
+
+        LibraryFactory.create(display_name='<script>alert("library XSS")</script>')
+
+        resp = self.client.get_html('/home/')
+        for xss in ('course', 'library'):
+            html = '<script>alert("{name} XSS")</script>'.format(
+                name=xss
+            )
+            self.assert_xss(resp, html)
+
     def test_course_overview_view_with_course(self):
         """Test viewing the course overview page with an existing course"""
         course = CourseFactory.create()
@@ -1483,7 +1510,6 @@ class ContentStoreTest(ContentStoreTestCase):
         test_get_html('export_handler')
         test_get_html('course_team_handler')
         test_get_html('course_info_handler')
-        test_get_html('checklists_handler')
         test_get_html('assets_handler')
         test_get_html('tabs_handler')
         test_get_html('settings_handler')
@@ -1667,7 +1693,6 @@ class ContentStoreTest(ContentStoreTestCase):
         self.assertEqual(course.textbooks, [])
         self.assertIn('GRADER', course.grading_policy)
         self.assertIn('GRADE_CUTOFFS', course.grading_policy)
-        self.assertGreaterEqual(len(course.checklists), 4)
 
         # by fetching
         fetched_course = self.store.get_item(course.location)
@@ -1676,8 +1701,6 @@ class ContentStoreTest(ContentStoreTestCase):
         self.assertEqual(course.start, fetched_course.start)
         self.assertEqual(fetched_course.start, fetched_item.start)
         self.assertEqual(course.textbooks, fetched_course.textbooks)
-        # is this test too strict? i.e., it requires the dicts to be ==
-        self.assertEqual(course.checklists, fetched_course.checklists)
 
     def test_image_import(self):
         """Test backwards compatibilty of course image."""
@@ -1903,8 +1926,8 @@ class RerunCourseTest(ContentStoreTestCase):
         source_course = CourseFactory.create(advertised_start="01-12-2015")
         destination_course_key = self.post_rerun_request(source_course.id)
         destination_course = self.store.get_course(destination_course_key)
-        # Advertised_start is String field so it will return empty string if its not set
-        self.assertEqual('', destination_course.advertised_start)
+
+        self.assertEqual(None, destination_course.advertised_start)
 
     def test_rerun_of_rerun(self):
         source_course = CourseFactory.create()
