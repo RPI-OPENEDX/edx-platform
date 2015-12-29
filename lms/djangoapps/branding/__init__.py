@@ -17,22 +17,32 @@ from django.contrib.staticfiles.storage import staticfiles_storage
 from openedx.core.djangoapps.content.course_overviews.models import CourseOverview
 
 
-def get_visible_courses(org=None):
+def get_visible_courses(org=None, filter_=None):
     """
-    Return the set of CourseOverviews that should be visible in this branded instance
+    Return the set of CourseOverviews that should be visible in this branded
+    instance.
+
+    Arguments:
+        org (string): Optional parameter that allows case-insensitive
+            filtering by organization.
+        filter_ (dict): Optional parameter that allows custom filtering by
+            fields on the course.
     """
     microsite_org = microsite.get_value('course_org_filter')
 
     if org and microsite_org:
         # When called in the context of a microsite, return an empty result if the org
         # passed by the caller does not match the designated microsite org.
-        courses = CourseOverview.get_all_courses(org=org) if org == microsite_org else []
+        courses = CourseOverview.get_all_courses(
+            org=org,
+            filter_=filter_,
+        ) if org == microsite_org else []
     else:
         # We only make it to this point if one of org or microsite_org is defined.
         # If both org and microsite_org were defined, the code would have fallen into the
         # first branch of the conditional above, wherein an equality check is performed.
         target_org = org or microsite_org
-        courses = CourseOverview.get_all_courses(org=target_org)
+        courses = CourseOverview.get_all_courses(org=target_org, filter_=filter_)
 
     courses = sorted(courses, key=lambda course: course.number)
 
@@ -64,28 +74,3 @@ def get_university_for_request():
     if no university was specified
     """
     return microsite.get_value('university')
-
-
-def get_logo_url():
-    """
-    Return the url for the branded logo image to be used
-    """
-
-    # if the MicrositeConfiguration has a value for the logo_image_url
-    # let's use that
-    image_url = microsite.get_value('logo_image_url')
-    if image_url:
-        return '{static_url}{image_url}'.format(
-            static_url=settings.STATIC_URL,
-            image_url=image_url
-        )
-
-    # otherwise, use the legacy means to configure this
-    university = microsite.get_value('university')
-
-    if university is None and settings.FEATURES.get('IS_EDX_DOMAIN', False):
-        return staticfiles_storage.url('images/edx-theme/edx-logo-77x36.png')
-    elif university:
-        return staticfiles_storage.url('images/{uni}-on-edx-logo.png'.format(uni=university))
-    else:
-        return staticfiles_storage.url('images/logo.png')
