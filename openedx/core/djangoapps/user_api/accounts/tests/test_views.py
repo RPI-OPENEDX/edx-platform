@@ -2,8 +2,9 @@
 """
 Test cases to cover Accounts-related behaviors of the User API application
 """
-import datetime
+from collections import OrderedDict
 from copy import deepcopy
+import datetime
 import ddt
 import hashlib
 import json
@@ -16,6 +17,7 @@ from django.core.urlresolvers import reverse
 from django.test.testcases import TransactionTestCase
 from django.test.utils import override_settings
 from rest_framework.test import APITestCase, APIClient
+from openedx.core.djangoapps.user_api.models import UserPreference
 
 from student.tests.factories import UserFactory
 from student.models import UserProfile, LanguageProficiency, PendingEmailChange
@@ -151,34 +153,36 @@ class TestAccountAPI(UserAPITestCase):
             }
         )
 
-    def _verify_full_shareable_account_response(self, response):
+    def _verify_full_shareable_account_response(self, response, account_privacy=None):
         """
         Verify that the shareable fields from the account are returned
         """
         data = response.data
-        self.assertEqual(6, len(data))
+        self.assertEqual(7, len(data))
         self.assertEqual(self.user.username, data["username"])
         self.assertEqual("US", data["country"])
         self._verify_profile_image_data(data, True)
         self.assertIsNone(data["time_zone"])
         self.assertEqual([{"code": "en"}], data["language_proficiencies"])
         self.assertEqual("Tired mother of twins", data["bio"])
+        self.assertEqual(account_privacy, data["account_privacy"])
 
-    def _verify_private_account_response(self, response, requires_parental_consent=False):
+    def _verify_private_account_response(self, response, requires_parental_consent=False, account_privacy=None):
         """
         Verify that only the public fields are returned if a user does not want to share account fields
         """
         data = response.data
-        self.assertEqual(2, len(data))
+        self.assertEqual(3, len(data))
         self.assertEqual(self.user.username, data["username"])
         self._verify_profile_image_data(data, not requires_parental_consent)
+        self.assertEqual(account_privacy, data["account_privacy"])
 
     def _verify_full_account_response(self, response, requires_parental_consent=False):
         """
         Verify that all account fields are returned (even those that are not shareable).
         """
         data = response.data
-        self.assertEqual(15, len(data))
+        self.assertEqual(16, len(data))
         self.assertEqual(self.user.username, data["username"])
         self.assertEqual(self.user.first_name + " " + self.user.last_name, data["name"])
         self.assertEqual("US", data["country"])
@@ -194,6 +198,7 @@ class TestAccountAPI(UserAPITestCase):
         self._verify_profile_image_data(data, not requires_parental_consent)
         self.assertEquals(requires_parental_consent, data["requires_parental_consent"])
         self.assertEqual([{"code": "en"}], data["language_proficiencies"])
+        self.assertEqual(UserPreference.get_value(self.user, 'account_privacy'), data["account_privacy"])
 
     def test_anonymous_access(self):
         """
@@ -235,8 +240,9 @@ class TestAccountAPI(UserAPITestCase):
         """
         self.different_client.login(username=self.different_user.username, password=self.test_password)
         self.create_mock_profile(self.user)
-        response = self.send_get(self.different_client)
-        self._verify_full_shareable_account_response(response)
+        with self.assertNumQueries(11):
+            response = self.send_get(self.different_client)
+        self._verify_full_shareable_account_response(response, account_privacy=ALL_USERS_VISIBILITY)
 
     # Note: using getattr so that the patching works even if there is no configuration.
     # This is needed when testing CMS as the patching is still executed even though the
@@ -249,8 +255,9 @@ class TestAccountAPI(UserAPITestCase):
         """
         self.different_client.login(username=self.different_user.username, password=self.test_password)
         self.create_mock_profile(self.user)
-        response = self.send_get(self.different_client)
-        self._verify_private_account_response(response)
+        with self.assertNumQueries(11):
+            response = self.send_get(self.different_client)
+        self._verify_private_account_response(response, account_privacy=PRIVATE_VISIBILITY)
 
     @ddt.data(
         ("client", "user", PRIVATE_VISIBILITY),
@@ -270,9 +277,9 @@ class TestAccountAPI(UserAPITestCase):
             Confirms that private fields are private, and public/shareable fields are public/shareable
             """
             if preference_visibility == PRIVATE_VISIBILITY:
-                self._verify_private_account_response(response)
+                self._verify_private_account_response(response, account_privacy=PRIVATE_VISIBILITY)
             else:
-                self._verify_full_shareable_account_response(response)
+                self._verify_full_shareable_account_response(response, ALL_USERS_VISIBILITY)
 
         client = self.login_client(api_client, requesting_username)
 
@@ -299,9 +306,10 @@ class TestAccountAPI(UserAPITestCase):
             """
             Internal helper to perform the actual assertions
             """
-            response = self.send_get(self.client)
+            with self.assertNumQueries(9):
+                response = self.send_get(self.client)
             data = response.data
-            self.assertEqual(15, len(data))
+            self.assertEqual(16, len(data))
             self.assertEqual(self.user.username, data["username"])
             self.assertEqual(self.user.first_name + " " + self.user.last_name, data["name"])
             for empty_field in ("year_of_birth", "level_of_education", "mailing_address", "bio"):
@@ -315,6 +323,7 @@ class TestAccountAPI(UserAPITestCase):
             self._verify_profile_image_data(data, False)
             self.assertTrue(data["requires_parental_consent"])
             self.assertEqual([], data["language_proficiencies"])
+            self.assertEqual(PRIVATE_VISIBILITY, data["account_privacy"])
 
         self.client.login(username=self.user.username, password=self.test_password)
         verify_get_own_information()
@@ -336,7 +345,8 @@ class TestAccountAPI(UserAPITestCase):
         legacy_profile.save()
 
         self.client.login(username=self.user.username, password=self.test_password)
-        response = self.send_get(self.client)
+        with self.assertNumQueries(9):
+            response = self.send_get(self.client)
         for empty_field in ("level_of_education", "gender", "country", "bio"):
             self.assertIsNone(response.data[empty_field])
 
@@ -374,15 +384,17 @@ class TestAccountAPI(UserAPITestCase):
         ("level_of_education", "none", u"ȻħȺɍłɇs", u'"ȻħȺɍłɇs" is not a valid choice.'),
         ("country", "GB", "XY", u'"XY" is not a valid choice.'),
         ("year_of_birth", 2009, "not_an_int", u"A valid integer is required."),
-        ("name", "bob", "z" * 256, u"Ensure this field has no more than 255 characters."),
-        ("name", u"ȻħȺɍłɇs", "z   ", u"The name field must be at least 2 characters long."),
+        ("name", "bob", "z" * 256, u"Ensure this value has at most 255 characters (it has 256)."),
+        ("name", u"ȻħȺɍłɇs", "z   ", "The name field must be at least 2 characters long."),
         ("goals", "Smell the roses"),
         ("mailing_address", "Sesame Street"),
         # Note that we store the raw data, so it is up to client to escape the HTML.
         (
             "bio", u"<html>Lacrosse-playing superhero 壓是進界推日不復女</html>",
-            "z" * 3001, u"Ensure this field has no more than 3000 characters."
+            "z" * 3001, u"Ensure this value has at most 3000 characters (it has 3001)."
         ),
+        ("account_privacy", ALL_USERS_VISIBILITY),
+        ("account_privacy", PRIVATE_VISIBILITY),
         # Note that email is tested below, as it is not immediately updated.
         # Note that language_proficiencies is tested below as there are multiple error and success conditions.
     )
@@ -392,6 +404,14 @@ class TestAccountAPI(UserAPITestCase):
         Test the behavior of patch, when using the correct content_type.
         """
         client = self.login_client("client", "user")
+
+        if field == 'account_privacy':
+            # Ensure the user has birth year set, and is over 13, so
+            # account_privacy behaves normally
+            legacy_profile = UserProfile.objects.get(id=self.user.id)
+            legacy_profile.year_of_birth = 2000
+            legacy_profile.save()
+
         response = self.send_patch(client, {field: value})
         self.assertEqual(value, response.data[field])
 
@@ -407,8 +427,9 @@ class TestAccountAPI(UserAPITestCase):
                 ),
                 error_response.data["field_errors"][field]["developer_message"]
             )
-        else:
-            # If there are no values that would fail validation, then empty string should be supported.
+        elif field != "account_privacy":
+            # If there are no values that would fail validation, then empty string should be supported;
+            # except for account_privacy, which cannot be an empty string.
             response = self.send_patch(client, {field: ""})
             self.assertEqual("", response.data[field])
 
@@ -584,11 +605,14 @@ class TestAccountAPI(UserAPITestCase):
     @ddt.data(
         (u"not_a_list", {u'non_field_errors': [u'Expected a list of items but got type "unicode".']}),
         ([u"not_a_JSON_object"], [{u'non_field_errors': [u'Invalid data. Expected a dictionary, but got unicode.']}]),
-        ([{}], [{"code": [u"This field is required."]}]),
-        ([{u"code": u"invalid_language_code"}], [{'code': [u'"invalid_language_code" is not a valid choice.']}]),
+        ([{}], [OrderedDict([('code', [u'This field is required.'])])]),
+        (
+            [{u"code": u"invalid_language_code"}],
+            [OrderedDict([('code', [u'"invalid_language_code" is not a valid choice.'])])]
+        ),
         (
             [{u"code": u"kw"}, {u"code": u"el"}, {u"code": u"kw"}],
-            [u'The language_proficiencies field must consist of unique languages']
+            ['The language_proficiencies field must consist of unique languages']
         ),
     )
     @ddt.unpack
@@ -662,7 +686,7 @@ class TestAccountAPI(UserAPITestCase):
         response = self.send_get(client)
         if has_full_access:
             data = response.data
-            self.assertEqual(15, len(data))
+            self.assertEqual(16, len(data))
             self.assertEqual(self.user.username, data["username"])
             self.assertEqual(self.user.first_name + " " + self.user.last_name, data["name"])
             self.assertEqual(self.user.email, data["email"])
@@ -675,12 +699,17 @@ class TestAccountAPI(UserAPITestCase):
             self.assertIsNotNone(data["date_joined"])
             self._verify_profile_image_data(data, False)
             self.assertTrue(data["requires_parental_consent"])
+            self.assertEqual(PRIVATE_VISIBILITY, data["account_privacy"])
         else:
-            self._verify_private_account_response(response, requires_parental_consent=True)
+            self._verify_private_account_response(
+                response, requires_parental_consent=True, account_privacy=PRIVATE_VISIBILITY
+            )
 
         # Verify that the shared view is still private
         response = self.send_get(client, query_parameters='view=shared')
-        self._verify_private_account_response(response, requires_parental_consent=True)
+        self._verify_private_account_response(
+            response, requires_parental_consent=True, account_privacy=PRIVATE_VISIBILITY
+        )
 
 
 @unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Test only valid in lms')

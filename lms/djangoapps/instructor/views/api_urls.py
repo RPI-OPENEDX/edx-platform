@@ -41,7 +41,7 @@ urlpatterns = patterns(
         'instructor.views.api.get_student_progress_url', name="get_student_progress_url"),
     url(r'^reset_student_attempts$',
         'instructor.views.api.reset_student_attempts', name="reset_student_attempts"),
-    url(  # pylint: disable=bad-continuation
+    url(
         r'^rescore_problem$',
         'instructor.views.api.rescore_problem',
         name="rescore_problem"
@@ -115,6 +115,8 @@ urlpatterns = patterns(
         'instructor.views.api.get_enrollment_report', name="get_enrollment_report"),
     url(r'get_exec_summary_report$',
         'instructor.views.api.get_exec_summary_report', name="get_exec_summary_report"),
+    url(r'get_course_survey_results$',
+        'instructor.views.api.get_course_survey_results', name="get_course_survey_results"),
 
     # Coupon Codes..
     url(r'get_coupon_codes',
@@ -122,7 +124,10 @@ urlpatterns = patterns(
 
     # spoc gradebook
     url(r'^gradebook$',
-        'instructor.views.api.spoc_gradebook', name='spoc_gradebook'),
+        'instructor.views.gradebook_api.spoc_gradebook', name='spoc_gradebook'),
+
+    url(r'^gradebook/(?P<offset>[0-9]+)$',
+        'instructor.views.gradebook_api.spoc_gradebook', name='spoc_gradebook'),
 
     # Cohort management
     url(r'add_users_to_cohorts$',
@@ -140,4 +145,20 @@ urlpatterns = patterns(
     url(r'^start_certificate_generation',
         'instructor.views.api.start_certificate_generation',
         name='start_certificate_generation'),
+
+    url(r'^start_certificate_regeneration',
+        'instructor.views.api.start_certificate_regeneration',
+        name='start_certificate_regeneration'),
+
+    url(r'^certificate_exception_view/$',
+        'instructor.views.api.certificate_exception_view',
+        name='certificate_exception_view'),
+
+    url(r'^generate_certificate_exceptions/(?P<generate_for>[^/]*)',
+        'instructor.views.api.generate_certificate_exceptions',
+        name='generate_certificate_exceptions'),
+
+    url(r'^generate_bulk_certificate_exceptions',
+        'instructor.views.api.generate_bulk_certificate_exceptions',
+        name='generate_bulk_certificate_exceptions'),
 )

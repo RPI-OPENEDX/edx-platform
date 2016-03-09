@@ -10,6 +10,7 @@ class ProblemPage(PageObject):
     """
 
     url = None
+    CSS_PROBLEM_HEADER = '.problem-header'
 
     def is_browser_on_page(self):
         return self.q(css='.xblock-student_view').present
@@ -42,33 +43,55 @@ class ProblemPage(PageObject):
         """
         return self.q(css="div.problem div.problem-hint").text[0]
 
-    @property
-    def mathjax_rendered_in_problem(self):
+    def verify_mathjax_rendered_in_problem(self):
         """
         Check that MathJax have been rendered in problem hint
         """
-        mathjax_container = self.q(css="div.problem p .MathJax .math")
-        return mathjax_container.visible and mathjax_container.present
+        def mathjax_present():
+            """ Returns True if MathJax css is present in the problem body """
+            mathjax_container = self.q(css="div.problem p .MathJax .math")
+            return mathjax_container.visible and mathjax_container.present
 
-    @property
-    def mathjax_rendered_in_hint(self):
+        self.wait_for(
+            mathjax_present,
+            description="MathJax rendered in problem body"
+        )
+
+    def verify_mathjax_rendered_in_hint(self):
         """
         Check that MathJax have been rendered in problem hint
         """
-        mathjax_container = self.q(css="div.problem div.problem-hint .MathJax .math")
-        return mathjax_container.visible and mathjax_container.present
+        def mathjax_present():
+            """ Returns True if MathJax css is present in the problem body """
+            mathjax_container = self.q(css="div.problem div.problem-hint .MathJax .math")
+            return mathjax_container.visible and mathjax_container.present
 
-    def fill_answer(self, text):
+        self.wait_for(
+            mathjax_present,
+            description="MathJax rendered in hint"
+        )
+
+    def fill_answer(self, text, input_num=None):
         """
         Fill in the answer to the problem.
+
+        args:
+            text: String to fill the input with.
+
+        kwargs:
+            input_num: If provided, fills only the input_numth field. Else, all
+                input fields will be filled.
         """
-        self.q(css='div.problem div.capa_inputtype.textline input').fill(text)
+        fields = self.q(css='div.problem div.capa_inputtype.textline input')
+        fields = fields.nth(input_num) if input_num is not None else fields
+        fields.fill(text)
 
     def fill_answer_numerical(self, text):
         """
         Fill in the answer to a numerical problem.
         """
         self.q(css='div.problem section.inputtype input').fill(text)
+        self.wait_for_ajax()
 
     def click_check(self):
         """
@@ -76,6 +99,12 @@ class ProblemPage(PageObject):
         """
         self.q(css='div.problem button.check').click()
         self.wait_for_ajax()
+
+    def wait_for_status_icon(self):
+        """
+        wait for status icon
+        """
+        self.wait_for_element_visibility('div.problem section.inputtype div .status', 'wait for status icon')
 
     def click_hint(self):
         """

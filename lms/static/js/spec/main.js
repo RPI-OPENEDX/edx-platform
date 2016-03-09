@@ -49,7 +49,7 @@
             'jasmine.async': 'xmodule_js/common_static/js/vendor/jasmine.async',
             'draggabilly': 'xmodule_js/common_static/js/vendor/draggabilly.pkgd',
             'domReady': 'xmodule_js/common_static/js/vendor/domReady',
-            'mathjax': '//cdn.mathjax.org/mathjax/2.4-latest/MathJax.js?config=TeX-MML-AM_HTMLorMML-full&delayStartupUntil=configured',
+            'mathjax': '//cdn.mathjax.org/mathjax/2.5-latest/MathJax.js?config=TeX-MML-AM_HTMLorMML-full&delayStartupUntil=configured', // jshint ignore:line
             'youtube': '//www.youtube.com/player_api?noext',
             'coffee/src/ajax_prefix': 'xmodule_js/common_static/coffee/src/ajax_prefix',
             'coffee/src/instructor_dashboard/student_admin': 'coffee/src/instructor_dashboard/student_admin',
@@ -293,6 +293,10 @@
                 exports: 'coffee/src/instructor_dashboard/student_admin',
                 deps: ['jquery', 'underscore', 'coffee/src/instructor_dashboard/util', 'string_utils']
             },
+            'js/instructor_dashboard/certificates': {
+                exports: 'js/instructor_dashboard/certificates',
+                deps: ['jquery', 'gettext', 'underscore']
+            },
             // LMS class loaded explicitly until they are converted to use RequireJS
             'js/student_account/account': {
                 exports: 'js/student_account/account',
@@ -312,7 +316,7 @@
             },
             'js/ccx/schedule': {
                 exports: 'js/ccx/schedule',
-                deps: ['jquery', 'underscore', 'backbone', 'gettext']
+                deps: ['jquery', 'underscore', 'backbone', 'gettext', 'moment']
             },
 
             // Backbone classes loaded explicitly until they are converted to use RequireJS
@@ -638,10 +642,14 @@
         'lms/include/js/spec/views/notification_spec.js',
         'lms/include/js/spec/views/file_uploader_spec.js',
         'lms/include/js/spec/dashboard/donation.js',
+        'lms/include/js/spec/dashboard/track_events_spec.js',
         'lms/include/js/spec/groups/views/cohorts_spec.js',
         'lms/include/js/spec/shoppingcart/shoppingcart_spec.js',
         'lms/include/js/spec/instructor_dashboard/ecommerce_spec.js',
         'lms/include/js/spec/instructor_dashboard/student_admin_spec.js',
+        'lms/include/js/spec/instructor_dashboard/certificates_exception_spec.js',
+        'lms/include/js/spec/instructor_dashboard/certificates_bulk_exception_spec.js',
+        'lms/include/js/spec/instructor_dashboard/certificates_spec.js',
         'lms/include/js/spec/student_account/account_spec.js',
         'lms/include/js/spec/student_account/access_spec.js',
         'lms/include/js/spec/student_account/logistration_factory_spec.js',
@@ -667,6 +675,7 @@
         'lms/include/js/spec/verify_student/image_input_spec.js',
         'lms/include/js/spec/verify_student/review_photos_step_view_spec.js',
         'lms/include/js/spec/verify_student/make_payment_step_view_spec.js',
+        'lms/include/js/spec/verify_student/make_payment_step_view_ab_testing_spec.js',
         'lms/include/js/spec/edxnotes/utils/logger_spec.js',
         'lms/include/js/spec/edxnotes/views/notes_factory_spec.js',
         'lms/include/js/spec/edxnotes/views/shim_spec.js',
@@ -719,7 +728,8 @@
         'lms/include/teams/js/spec/views/topic_card_spec.js',
         'lms/include/teams/js/spec/views/topic_teams_spec.js',
         'lms/include/teams/js/spec/views/topics_spec.js',
-        'lms/include/teams/js/spec/views/team_profile_header_actions_spec.js'
+        'lms/include/teams/js/spec/views/team_profile_header_actions_spec.js',
+        'lms/include/js/spec/financial-assistance/financial_assistance_form_view_spec.js'
     ]);
 
 }).call(this, requirejs, define);

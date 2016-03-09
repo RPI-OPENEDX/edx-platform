@@ -892,7 +892,7 @@ class RegistrationViewTest(ThirdPartyAuthTestMixin, ApiTestCase):
                 u"required": True,
                 u"label": u"Full name",
                 u"placeholder": u"Jane Doe",
-                u"instructions": u"Needed for any certificates you may earn",
+                u"instructions": u"Your legal name, used for any certificates you earn.",
                 u"restrictions": {
                     "max_length": 255
                 },
@@ -978,7 +978,7 @@ class RegistrationViewTest(ThirdPartyAuthTestMixin, ApiTestCase):
                     u"required": True,
                     u"label": u"Full name",
                     u"placeholder": u"Jane Doe",
-                    u"instructions": u"Needed for any certificates you may earn",
+                    u"instructions": u"Your legal name, used for any certificates you earn.",
                     u"restrictions": {
                         "max_length": NAME_MAX_LENGTH,
                     }
@@ -1020,8 +1020,8 @@ class RegistrationViewTest(ThirdPartyAuthTestMixin, ApiTestCase):
                     {"value": "hs", "name": "Secondary/high school"},
                     {"value": "jhs", "name": "Junior secondary/junior high/middle school"},
                     {"value": "el", "name": "Elementary/primary school"},
-                    {"value": "none", "name": "None"},
-                    {"value": "other", "name": "Other"},
+                    {"value": "none", "name": "No Formal Education"},
+                    {"value": "other", "name": "Other Education"},
                 ],
             }
         )
@@ -1046,8 +1046,8 @@ class RegistrationViewTest(ThirdPartyAuthTestMixin, ApiTestCase):
                     {"value": "hs", "name": "Secondary/high school TRANSLATED"},
                     {"value": "jhs", "name": "Junior secondary/junior high/middle school TRANSLATED"},
                     {"value": "el", "name": "Elementary/primary school TRANSLATED"},
-                    {"value": "none", "name": "None TRANSLATED"},
-                    {"value": "other", "name": "Other TRANSLATED"},
+                    {"value": "none", "name": "No Formal Education TRANSLATED"},
+                    {"value": "other", "name": "Other Education TRANSLATED"},
                 ],
             }
         )
@@ -1064,7 +1064,7 @@ class RegistrationViewTest(ThirdPartyAuthTestMixin, ApiTestCase):
                     {"value": "", "name": "--", "default": True},
                     {"value": "m", "name": "Male"},
                     {"value": "f", "name": "Female"},
-                    {"value": "o", "name": "Other"},
+                    {"value": "o", "name": "Other/Prefer Not to Say"},
                 ],
             }
         )
@@ -1084,7 +1084,7 @@ class RegistrationViewTest(ThirdPartyAuthTestMixin, ApiTestCase):
                     {"value": "", "name": "--", "default": True},
                     {"value": "m", "name": "Male TRANSLATED"},
                     {"value": "f", "name": "Female TRANSLATED"},
-                    {"value": "o", "name": "Other TRANSLATED"},
+                    {"value": "o", "name": "Other/Prefer Not to Say TRANSLATED"},
                 ],
             }
         )

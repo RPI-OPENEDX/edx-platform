@@ -534,8 +534,7 @@ class CourseOutlinePage(CoursePage, CourseOutlineContainer):
         """
         Makes a Proctored exam.
         """
-        self.q(css="#id_timed_examination").first.click()
-        self.q(css="#id_exam_proctoring").first.click()
+        self.q(css="#id_proctored_exam").first.click()
         self.q(css=".action-save").first.click()
         self.wait_for_ajax()
 
@@ -543,28 +542,59 @@ class CourseOutlinePage(CoursePage, CourseOutlineContainer):
         """
         Makes a timed exam.
         """
-        self.q(css="#id_timed_examination").first.click()
+        self.q(css="#id_timed_exam").first.click()
         self.q(css=".action-save").first.click()
         self.wait_for_ajax()
+
+    def select_none_exam(self):
+        """
+        Choose "none" exam but do not press enter
+        """
+        self.q(css="#id_not_timed").first.click()
+
+    def select_timed_exam(self):
+        """
+        Choose a timed exam but do not press enter
+        """
+        self.q(css="#id_timed_exam").first.click()
+
+    def select_proctored_exam(self):
+        """
+        Choose a proctored exam but do not press enter
+        """
+        self.q(css="#id_proctored_exam").first.click()
+
+    def select_practice_exam(self):
+        """
+        Choose a practice exam but do not press enter
+        """
+        self.q(css="#id_practice_exam").first.click()
+
+    def time_allotted_field_visible(self):
+        """
+        returns whether the time allotted field is visible
+        """
+        return self.q(css="#id_time_limit_div").visible
 
     def proctoring_items_are_displayed(self):
         """
         Returns True if all the items are found.
         """
-        # The Timed exam checkbox
-        if not self.q(css="#id_timed_examination").present:
+
+        # The None radio button
+        if not self.q(css="#id_not_timed").present:
             return False
 
-        # The time limit field
-        if not self.q(css="#id_time_limit").present:
+        # The Timed exam radio button
+        if not self.q(css="#id_timed_exam").present:
             return False
 
-        # The Practice exam checkbox
+        # The Proctored exam radio button
+        if not self.q(css="#id_proctored_exam").present:
+            return False
+
+        # The Practice exam radio button
         if not self.q(css="#id_practice_exam").present:
-            return False
-
-        # The Proctored exam checkbox
-        if not self.q(css="#id_exam_proctoring").present:
             return False
 
         return True
@@ -733,8 +763,20 @@ class CourseOutlineModal(object):
     def has_release_date(self):
         return self.find_css("#start_date").present
 
+    def has_release_time(self):
+        """
+        Check if the input box for the release time exists in the subsection's settings window
+        """
+        return self.find_css("#start_time").present
+
     def has_due_date(self):
         return self.find_css("#due_date").present
+
+    def has_due_time(self):
+        """
+        Check if the input box for the due time exists in the subsection's settings window
+        """
+        return self.find_css("#due_time").present
 
     def has_policy(self):
         return self.find_css("#grading_type").present
@@ -760,6 +802,15 @@ class CourseOutlineModal(object):
             "{} is updated in modal.".format(property_name)
         ).fulfill()
 
+    def set_time(self, input_selector, time):
+        """
+        Set `time` value to input pointed by `input_selector`
+        Not using the time picker to make sure it's not being rounded up
+        """
+
+        self.page.q(css=input_selector).fill(time)
+        self.page.q(css=input_selector).results[0].send_keys(Keys.ENTER)
+
     @property
     def release_date(self):
         return self.find_css("#start_date").first.attrs('value')[0]
@@ -772,6 +823,20 @@ class CourseOutlineModal(object):
         self.set_date('release_date', "#start_date", date)
 
     @property
+    def release_time(self):
+        """
+        Returns the current value of the release time. Default is u'00:00'
+        """
+        return self.find_css("#start_time").first.attrs('value')[0]
+
+    @release_time.setter
+    def release_time(self, time):
+        """
+        Time is "HH:MM" string.
+        """
+        self.set_time("#start_time", time)
+
+    @property
     def due_date(self):
         return self.find_css("#due_date").first.attrs('value')[0]
 
@@ -781,6 +846,20 @@ class CourseOutlineModal(object):
         Date is "mm/dd/yyyy" string.
         """
         self.set_date('due_date', "#due_date", date)
+
+    @property
+    def due_time(self):
+        """
+        Returns the current value of the release time. Default is u''
+        """
+        return self.find_css("#due_time").first.attrs('value')[0]
+
+    @due_time.setter
+    def due_time(self, time):
+        """
+        Time is "HH:MM" string.
+        """
+        self.set_time("#due_time", time)
 
     @property
     def policy(self):

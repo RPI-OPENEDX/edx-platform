@@ -2,7 +2,7 @@
 // ====================
 // NOTE: thread = (post + (responses and comments))
 
-// Table of Contents 
+// Table of Contents
 // * +general thread layout
 // * +thread - wrapper styling
 // * +thread - elements - shared styles
@@ -25,12 +25,16 @@ body.discussion, .discussion-module {
 
     .post-header-content {
       display: inline-block;
-      width: flex-grid(9,12); 
+      width: flex-grid(9,12);
     }
 
     .post-header-actions {
       @include float(right);
       width: flex-grid(3,12);
+    }
+
+    .posted-details {
+      color: $gray-d1;
     }
   }
 
@@ -88,14 +92,14 @@ body.discussion {
 
   .discussion-post, .discussion-response, .discussion-comment {
     @include clearfix();
-    
+
     // thread - images
     .author-image {
       @include margin-right($baseline/2);
       display: inline-block;
-      vertical-align: top; 
+      vertical-align: top;
 
-      // STATE: No profile image 
+      // STATE: No profile image
       &:empty {
         display: none;
       }
@@ -127,7 +131,7 @@ body.discussion {
     .posted-details {
       @extend %t-copy-sub2;
       margin-top: ($baseline/5);
-      color: $gray-l1;
+      color: $gray-d1;
 
       .username {
         @extend %t-strong;
@@ -146,7 +150,10 @@ body.discussion {
 }
 
 // +post - individual element styling
-body.discussion .discussion-post, body.discussion .discussion-article {
+body.discussion .discussion-post,
+body.discussion .discussion-article,
+body.view-in-course .discussion-post,
+body.view-in-course .discussion-article {
   // NOTE: discussion-article is used for inline discussion modules.
   @include clearfix();
 

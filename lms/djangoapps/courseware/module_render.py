@@ -5,7 +5,6 @@ Module rendering
 import hashlib
 import json
 import logging
-import mimetypes
 
 import static_replace
 
@@ -57,7 +56,6 @@ from openedx.core.lib.xblock_utils import (
     wrap_xblock,
     request_token as xblock_request_token,
 )
-from psychometrics.psychoanalyze import make_psychometrics_data_update_handler
 from student.models import anonymous_id_for_user, user_by_anonymous_id
 from student.roles import CourseBetaTesterRole
 from xblock.core import XBlock
@@ -78,7 +76,7 @@ from util.json_request import JsonResponse
 from util.model_utils import slugify
 from util.sandboxing import can_execute_unsafe_code, get_python_lib_zip
 from util import milestones_helpers
-from verify_student.services import ReverificationService
+from lms.djangoapps.verify_student.services import ReverificationService
 
 from edx_proctoring.services import ProctoringService
 from openedx.core.djangoapps.credit.services import CreditService
@@ -194,14 +192,14 @@ def toc_for_course(user, request, course, active_chapter, active_section, field_
                     }
 
                     #
-                    # Add in rendering context for proctored exams
-                    # if applicable
+                    # Add in rendering context if exam is a timed exam (which includes proctored)
                     #
-                    is_proctored_enabled = (
-                        getattr(section, 'is_proctored_enabled', False) and
-                        settings.FEATURES.get('ENABLE_PROCTORED_EXAMS', False)
+
+                    section_is_time_limited = (
+                        getattr(section, 'is_time_limited', False) and
+                        settings.FEATURES.get('ENABLE_SPECIAL_EXAMS', False)
                     )
-                    if is_proctored_enabled:
+                    if section_is_time_limited:
                         # We need to import this here otherwise Lettuce test
                         # harness fails. When running in 'harvest' mode, the
                         # test service appears to get into trouble with
@@ -224,9 +222,9 @@ def toc_for_course(user, request, course, active_chapter, active_section, field_
                         # This will return None, if (user, course_id, content_id)
                         # is not applicable
                         #
-                        proctoring_attempt_context = None
+                        timed_exam_attempt_context = None
                         try:
-                            proctoring_attempt_context = get_attempt_status_summary(
+                            timed_exam_attempt_context = get_attempt_status_summary(
                                 user.id,
                                 unicode(course.id),
                                 unicode(section.location)
@@ -238,12 +236,12 @@ def toc_for_course(user, request, course, active_chapter, active_section, field_
                             # unhandled exception
                             log.exception(ex)
 
-                        if proctoring_attempt_context:
+                        if timed_exam_attempt_context:
                             # yes, user has proctoring context about
                             # this level of the courseware
                             # so add to the accordion data context
                             section_context.update({
-                                'proctoring': proctoring_attempt_context,
+                                'proctoring': timed_exam_attempt_context,
                             })
 
                     sections.append(section_context)
@@ -414,31 +412,6 @@ def get_module_system_for_user(user, student_data,  # TODO  # pylint: disable=to
         'waittime': settings.XQUEUE_WAITTIME_BETWEEN_REQUESTS
     }
 
-    # This is a hacky way to pass settings to the combined open ended xmodule
-    # It needs an S3 interface to upload images to S3
-    # It needs the open ended grading interface in order to get peer grading to be done
-    # this first checks to see if the descriptor is the correct one, and only sends settings if it is
-
-    # Get descriptor metadata fields indicating needs for various settings
-    needs_open_ended_interface = getattr(descriptor, "needs_open_ended_interface", False)
-    needs_s3_interface = getattr(descriptor, "needs_s3_interface", False)
-
-    # Initialize interfaces to None
-    open_ended_grading_interface = None
-    s3_interface = None
-
-    # Create interfaces if needed
-    if needs_open_ended_interface:
-        open_ended_grading_interface = settings.OPEN_ENDED_GRADING_INTERFACE
-        open_ended_grading_interface['mock_peer_grading'] = settings.MOCK_PEER_GRADING
-        open_ended_grading_interface['mock_staff_grading'] = settings.MOCK_STAFF_GRADING
-    if needs_s3_interface:
-        s3_interface = {
-            'access_key': getattr(settings, 'AWS_ACCESS_KEY_ID', ''),
-            'secret_access_key': getattr(settings, 'AWS_SECRET_ACCESS_KEY', ''),
-            'storage_bucket_name': getattr(settings, 'AWS_STORAGE_BUCKET_NAME', 'openended')
-        }
-
     def inner_get_module(descriptor):
         """
         Delegate to get_module_for_descriptor_internal() with all values except `descriptor` set.
@@ -470,7 +443,7 @@ def get_module_system_for_user(user, student_data,  # TODO  # pylint: disable=to
         # Fulfillment Use Case: Entrance Exam
         # If this module is part of an entrance exam, we'll need to see if the student
         # has reached the point at which they can collect the associated milestone
-        if settings.FEATURES.get('ENTRANCE_EXAMS', False):
+        if milestones_helpers.is_entrance_exams_enabled():
             course = modulestore().get_course(course_key)
             content = modulestore().get_item(content_key)
             entrance_exam_enabled = getattr(course, 'entrance_exam_enabled', False)
@@ -497,7 +470,7 @@ def get_module_system_for_user(user, student_data,  # TODO  # pylint: disable=to
         """
         Manages the workflow for recording and updating of student module grade state
         """
-        user_id = event.get('user_id', user.id)
+        user_id = user.id
 
         grade = event.get('value')
         max_grade = event.get('max_value')
@@ -602,7 +575,7 @@ def get_module_system_for_user(user, student_data,  # TODO  # pylint: disable=to
         )
 
         module.descriptor.scope_ids = (
-            module.descriptor.scope_ids._replace(user_id=real_user.id)  # pylint: disable=protected-access
+            module.descriptor.scope_ids._replace(user_id=real_user.id)
         )
         module.scope_ids = module.descriptor.scope_ids  # this is needed b/c NamedTuples are immutable
         # now bind the module to the new ModuleSystem instance and vice-versa
@@ -727,8 +700,6 @@ def get_module_system_for_user(user, student_data,  # TODO  # pylint: disable=to
         publish=publish,
         anonymous_student_id=anonymous_student_id,
         course_id=course_id,
-        open_ended_grading_interface=open_ended_grading_interface,
-        s3_interface=s3_interface,
         cache=cache,
         can_execute_unsafe_code=(lambda: can_execute_unsafe_code(course_id)),
         get_python_lib_zip=(lambda: get_python_lib_zip(contentstore, course_id)),
@@ -761,16 +732,11 @@ def get_module_system_for_user(user, student_data,  # TODO  # pylint: disable=to
             position = None
 
     system.set('position', position)
-    if settings.FEATURES.get('ENABLE_PSYCHOMETRICS') and user.is_authenticated():
-        system.set(
-            'psychometrics_handler',  # set callback for updating PsychometricsData
-            make_psychometrics_data_update_handler(course_id, user, descriptor.location)
-        )
 
     system.set(u'user_is_staff', user_is_staff)
     system.set(u'user_is_admin', bool(has_access(user, u'staff', 'global')))
     system.set(u'user_is_beta_tester', CourseBetaTesterRole(course_id).has_user(user))
-    system.set(u'days_early_for_beta', getattr(descriptor, 'days_early_for_beta'))
+    system.set(u'days_early_for_beta', descriptor.days_early_for_beta)
 
     # make an ErrorDescriptor -- assuming that the descriptor's system is ok
     if has_access(user, u'staff', descriptor.location, course_id):
@@ -823,7 +789,7 @@ def get_module_for_descriptor_internal(user, descriptor, student_data, course_id
         ],
     )
 
-    descriptor.scope_ids = descriptor.scope_ids._replace(user_id=user.id)  # pylint: disable=protected-access
+    descriptor.scope_ids = descriptor.scope_ids._replace(user_id=user.id)
 
     # Do not check access when it's a noauth request.
     # Not that the access check needs to happen after the descriptor is bound
@@ -946,23 +912,6 @@ def handle_xblock_callback(request, course_id, usage_id, handler, suffix=None):
         return _invoke_xblock_handler(request, course_id, usage_id, handler, suffix, course=course)
 
 
-def xblock_resource(request, block_type, uri):  # pylint: disable=unused-argument
-    """
-    Return a package resource for the specified XBlock.
-    """
-    try:
-        xblock_class = XBlock.load_class(block_type, select=settings.XBLOCK_SELECT_FUNCTION)
-        content = xblock_class.open_local_resource(uri)
-    except IOError:
-        log.info('Failed to load xblock resource', exc_info=True)
-        raise Http404
-    except Exception:  # pylint: disable=broad-except
-        log.error('Failed to load xblock resource', exc_info=True)
-        raise Http404
-    mimetype, _ = mimetypes.guess_type(uri)
-    return HttpResponse(content, mimetype=mimetype)
-
-
 def get_module_by_usage_id(request, course_id, usage_id, disable_staff_debug_info=False, course=None):
     """
     Gets a module instance based on its `usage_id` in a course, for a given request/user
@@ -1040,13 +989,17 @@ def _invoke_xblock_handler(request, course_id, usage_id, handler, suffix, course
     files = request.FILES or {}
     error_msg = _check_files_limits(files)
     if error_msg:
-        return JsonResponse(object={'success': error_msg}, status=413)
+        return JsonResponse({'success': error_msg}, status=413)
 
     # Make a CourseKey from the course_id, raising a 404 upon parse error.
     try:
         course_key = CourseKey.from_string(course_id)
     except InvalidKeyError:
         raise Http404
+
+    # Gather metrics for New Relic so we can slice data in New Relic Insights
+    newrelic.agent.add_custom_parameter('course_id', unicode(course_key))
+    newrelic.agent.add_custom_parameter('org', unicode(course_key.org))
 
     with modulestore().bulk_operations(course_key):
         instance, tracking_context = get_module_by_usage_id(request, course_id, usage_id, course=course)
@@ -1055,7 +1008,7 @@ def _invoke_xblock_handler(request, course_id, usage_id, handler, suffix, course
         # New Relic. The suffix is necessary for XModule handlers because the
         # "handler" in those cases is always just "xmodule_handler".
         nr_tx_name = "{}.{}".format(instance.__class__.__name__, handler)
-        nr_tx_name += "/{}".format(suffix) if suffix else ""
+        nr_tx_name += "/{}".format(suffix) if (suffix and handler == "xmodule_handler") else ""
         newrelic.agent.set_transaction_name(nr_tx_name, group="Python/XBlock/Handler")
 
         tracking_context_name = 'module_callback_handler'
@@ -1083,7 +1036,7 @@ def _invoke_xblock_handler(request, course_id, usage_id, handler, suffix, course
         except ProcessingError as err:
             log.warning("Module encountered an error while processing AJAX call",
                         exc_info=True)
-            return JsonResponse(object={'success': err.args[0]}, status=200)
+            return JsonResponse({'success': err.args[0]}, status=200)
 
         # If any other error occurred, re-raise it to trigger a 500 response
         except Exception:

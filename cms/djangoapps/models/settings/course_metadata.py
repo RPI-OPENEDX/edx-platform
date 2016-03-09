@@ -26,7 +26,6 @@ class CourseMetadata(object):
         'enrollment_end',
         'tabs',
         'graceperiod',
-        'checklists',
         'show_timezone',
         'format',
         'graded',
@@ -50,6 +49,7 @@ class CourseMetadata(object):
         'is_proctored_enabled',
         'is_time_limited',
         'is_practice_exam',
+        'self_paced'
     ]
 
     @classmethod

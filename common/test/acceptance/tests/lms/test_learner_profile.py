@@ -75,7 +75,7 @@ class LearnerProfileTestMixin(EventsTestMixin):
 
         # Reset event tracking so that the tests only see events from
         # loading the profile page.
-        self.reset_event_tracking()
+        self.start_time = datetime.now()  # pylint: disable=attribute-defined-outside-init
 
         # Load the page
         profile_page.visit()
@@ -119,7 +119,9 @@ class LearnerProfileTestMixin(EventsTestMixin):
         """
 
         actual_events = self.wait_for_events(
-            event_filter={'event_type': 'edx.user.settings.viewed'}, number_of_matches=1)
+            start_time=self.start_time,
+            event_filter={'event_type': 'edx.user.settings.viewed', 'username': requesting_username},
+            number_of_matches=1)
         self.assert_events_match(
             [
                 {
@@ -150,6 +152,7 @@ class LearnerProfileTestMixin(EventsTestMixin):
 
         event_filter = {
             'event_type': self.USER_SETTINGS_CHANGED_EVENT_NAME,
+            'username': username,
         }
         with self.assert_events_match_during(event_filter=event_filter, expected_events=[expected_event]):
             yield
@@ -601,7 +604,7 @@ class OwnLearnerProfilePageTest(LearnerProfileTestMixin, WebAppTest):
 
         self.assert_default_image_has_public_access(profile_page)
 
-        profile_page.upload_file(filename='cohort_users_only_username.csv')
+        profile_page.upload_file(filename='generic_csv.csv')
         self.assertEqual(
             profile_page.profile_image_message,
             "The file must be one of the following types: .gif, .png, .jpeg, .jpg."
@@ -762,10 +765,12 @@ class LearnerProfileA11yTest(LearnerProfileTestMixin, WebAppTest):
         username, _ = self.log_in_as_unique_user()
         profile_page = self.visit_profile_page(username)
 
-        # TODO: There are several existing color contrast errors on this page,
-        # we will ignore this error in the test until we fix them.
         profile_page.a11y_audit.config.set_rules({
-            "ignore": ['color-contrast'],
+            "ignore": [
+                'color-contrast',  # TODO: AC-232
+                'skip-link',  # TODO: AC-179
+                'link-href',  # TODO: AC-231
+            ],
         })
 
         profile_page.a11y_audit.check_for_accessibility_errors()
@@ -788,4 +793,12 @@ class LearnerProfileA11yTest(LearnerProfileTestMixin, WebAppTest):
         different_username, _ = self.initialize_different_user(privacy=self.PRIVACY_PUBLIC)
         self.log_in_as_unique_user()
         profile_page = self.visit_profile_page(different_username)
+
+        profile_page.a11y_audit.config.set_rules({
+            "ignore": [
+                'skip-link',  # TODO: AC-179
+                'link-href',  # TODO: AC-231
+            ],
+        })
+
         profile_page.a11y_audit.check_for_accessibility_errors()

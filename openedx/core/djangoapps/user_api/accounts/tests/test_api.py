@@ -25,7 +25,7 @@ from ...errors import (
 from ..api import (
     get_account_settings, update_account_settings, create_account, activate_account, request_password_change
 )
-from .. import USERNAME_MAX_LENGTH, EMAIL_MAX_LENGTH, PASSWORD_MAX_LENGTH
+from .. import USERNAME_MAX_LENGTH, EMAIL_MAX_LENGTH, PASSWORD_MAX_LENGTH, PRIVATE_VISIBILITY
 
 
 def mock_render_to_string(template_name, context):
@@ -80,7 +80,7 @@ class TestAccountApi(UserSettingsEventTestMixin, TestCase):
 
         # With default configuration settings, email is not shared with other (non-staff) users.
         account_settings = get_account_settings(self.default_request, self.different_user.username)
-        self.assertFalse("email" in account_settings)
+        self.assertNotIn("email", account_settings)
 
         account_settings = get_account_settings(
             self.default_request,
@@ -149,6 +149,9 @@ class TestAccountApi(UserSettingsEventTestMixin, TestCase):
                 self.user,
                 {"language_proficiencies": [{}]}
             )
+
+        with self.assertRaises(AccountValidationError):
+            update_account_settings(self.user, {"account_privacy": ""})
 
     def test_update_multiple_validation_errors(self):
         """Test that all validation errors are built up and returned at once"""
@@ -275,6 +278,7 @@ class AccountSettingsOnCreationTest(TestCase):
             },
             'requires_parental_consent': True,
             'language_proficiencies': [],
+            'account_privacy': PRIVATE_VISIBILITY,
         })
 
 
@@ -309,7 +313,6 @@ class AccountCreationActivationAndPasswordChangeTest(TestCase):
         '@domain.com',
         'test@no_extension',
         u'fŕáńḱ@example.com',
-        u'frank@éxáḿṕĺé.ćőḿ',
 
         # Long email -- subtract the length of the @domain
         # except for one character (so we exceed the max length limit)
@@ -400,7 +403,7 @@ class AccountCreationActivationAndPasswordChangeTest(TestCase):
         # Verify that the body of the message contains something that looks
         # like an activation link
         email_body = mail.outbox[0].body
-        result = re.search('(?P<url>https?://[^\s]+)', email_body)
+        result = re.search(r'(?P<url>https?://[^\s]+)', email_body)
         self.assertIsNot(result, None)
 
     @unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Test only valid in LMS')
